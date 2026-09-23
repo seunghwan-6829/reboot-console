@@ -39,12 +39,28 @@ const isDir = p => { try { return !!p && fs.statSync(p).isDirectory(); } catch (
 
 /* 프로젝트 루트처럼 보이는가: YYMMDD_ 폴더가 하나라도 있거나 app/ 이 있는 폴더 */
 function looksLikeRoot(p) { try { return fs.readdirSync(p).some(n => /^\d{6}_/.test(n) && isDir(path.join(p, n))); } catch (e) { return false; } }
+/* 바탕화면·문서 아래(2단계)에서 프로젝트 폴더를 품은 곳을 찾는다 */
+function findRootNearby() {
+  const bases = [path.join(os.homedir(), "Desktop"), path.join(os.homedir(), "OneDrive", "Desktop"), path.join(os.homedir(), "OneDrive", "바탕 화면"), path.join(os.homedir(), "Documents")];
+  const hits = [];
+  for (const b of bases) {
+    if (!isDir(b)) continue;
+    if (looksLikeRoot(b)) hits.push(b);
+    let l1 = []; try { l1 = fs.readdirSync(b).filter(n => !/^[._$]/.test(n)).map(n => path.join(b, n)).filter(isDir); } catch (e) {}
+    for (const d1 of l1) { if (looksLikeRoot(d1)) hits.push(d1); let l2 = []; try { l2 = fs.readdirSync(d1).filter(n => !/^[._$]/.test(n)).map(n => path.join(d1, n)).filter(isDir); } catch (e) {} for (const d2 of l2) if (looksLikeRoot(d2)) hits.push(d2); }
+  }
+  // 프로젝트 폴더가 가장 많은 곳
+  const score = p => { try { return fs.readdirSync(p).filter(n => /^\d{6}_/.test(n)).length; } catch (e) { return 0; } };
+  return hits.sort((a, b) => score(b) - score(a))[0] || "";
+}
 function resolveRoot() {
   const c = readCfg();
   if (isDir(c.root)) return c.root;
-  const cands = [process.env.PORTABLE_EXECUTABLE_DIR, app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, "..")];
-  for (const p of cands) if (isDir(p) && (looksLikeRoot(p) || !app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR === p)) return p;
-  return "";   // 설치형은 Program Files 안에 있으니 첫 실행에 폴더를 묻는다
+  if (!app.isPackaged) return path.resolve(__dirname, "..");
+  const near = findRootNearby();
+  if (near) { writeCfg(Object.assign(c, { root: near })); return near; }
+  const def = path.join(os.homedir(), "Documents", "re-boot 콘솔");     // 없으면 만들어서 조용히 시작
+  try { fs.mkdirSync(def, { recursive: true }); writeCfg(Object.assign(c, { root: def })); return def; } catch (e) { return ""; }
 }
 
 /* ── 프로젝트 스캔 (파이썬 scan() 과 동일 형태) ─────────── */
