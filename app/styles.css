@@ -495,3 +495,18 @@ code{background:var(--sunk);border-radius:4px;padding:1px 5px;font-size:12.5px;f
 .runp .ln.ai span{color:var(--ink)}.runp .ln.tool span{color:var(--info)}.runp .ln.sys span{color:var(--ink-2);font-weight:600}.runp .ln.err span{color:var(--danger)}.runp .ln.raw span{color:var(--ink-3)}
 .runp .rf{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
 .runp .rf .sp{flex:1}
+
+/* ── 사진 드롭존 · 삭제 ─────────────── */
+.dropz{display:flex;align-items:center;gap:14px;border:2px dashed var(--line-2);border-radius:var(--r-lg);padding:14px 16px;cursor:pointer;background:var(--sunk);transition:.15s var(--ease)}
+.dropz:hover{border-color:var(--brand);background:var(--brand-soft)}
+.dropz .dzi{width:40px;height:40px;border-radius:10px;background:var(--panel);display:flex;align-items:center;justify-content:center;color:var(--brand);flex:none}
+.dropz .dzi svg{width:20px;height:20px;stroke-width:1.8}
+.dropz > div{flex:1;min-width:0}
+.dropz b{display:block;font-size:14px}
+.dropz small{display:block;font-size:12px;color:var(--ink-3);margin-top:2px}
+.view.dropping .dropz,.view.dropping{outline:3px dashed var(--brand);outline-offset:-6px}
+.shot{position:relative}
+.shx{position:absolute;top:6px;right:6px;z-index:3;width:24px;height:24px;border-radius:50%;border:0;background:rgba(20,23,26,.72);color:#fff;display:flex;align-items:center;justify-content:center;opacity:0;transition:.12s}
+.shx svg{width:12px;height:12px;stroke-width:2.4}
+.shot:hover .shx{opacity:1}
+.shx:hover{background:var(--danger)}

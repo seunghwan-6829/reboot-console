@@ -324,6 +324,31 @@ async function handle(req, res) {
       const out = path.join(ROOT, n, f); fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, body); return json(res, 200, { ok: true, path: out, size: body.length });
     }
+    if (p === "/local/project-create" && req.method === "POST") {
+      const raw = (q.get("name") || "").trim().replace(/[\\/:*?"<>|]/g, "").slice(0, 60);
+      if (!raw || /^[._]/.test(raw)) return json(res, 400, { ok: false, error: "폴더 이름이 비었거나 쓸 수 없는 글자입니다" });
+      const dir = path.join(ROOT, raw);
+      if (isDir(dir)) return json(res, 200, { ok: true, name: raw, existed: true });
+      fs.mkdirSync(dir, { recursive: true }); return json(res, 200, { ok: true, name: raw });
+    }
+    if (p === "/local/photo" && req.method === "POST") {
+      const n = q.get("name") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
+      let f = (q.get("file") || "photo.png").replace(/[\\/:*?"<>|]/g, "_").replace(/^[._]+/, "").slice(0, 80) || "photo.png";
+      if (!IMG.has(path.extname(f).toLowerCase())) return json(res, 400, { ok: false, error: "이미지 파일만 넣을 수 있습니다" });
+      const body = await readBody(req, 60 * 1024 * 1024);
+      if (body.length < 16) return json(res, 400, { ok: false, error: "빈 파일" });
+      let out = path.join(ROOT, n, f), k = 1; const stem = f.replace(/\.[^.]+$/, ""), ext = path.extname(f);
+      while (fs.existsSync(out)) out = path.join(ROOT, n, `${stem} (${k++})${ext}`);
+      fs.writeFileSync(out, body); return json(res, 200, { ok: true, file: path.basename(out), size: body.length });
+    }
+    if (p === "/local/photo-delete" && req.method === "POST") {
+      const n = q.get("name") || "", f = q.get("file") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
+      if (f.includes("/") || f.includes("\\") || !IMG.has(path.extname(f).toLowerCase())) return json(res, 400, { ok: false, error: "삭제할 수 없는 파일" });
+      const fp = path.join(ROOT, n, f); if (!fs.existsSync(fp)) return json(res, 404, { ok: false, error: "없는 파일" });
+      const trash = path.join(ROOT, n, "_trash"); fs.mkdirSync(trash, { recursive: true });
+      fs.renameSync(fp, path.join(trash, Date.now() + "_" + f));   // 바로 지우지 않고 _trash 로
+      return json(res, 200, { ok: true });
+    }
     if (p === "/local/shutdown") return json(res, 200, { ok: true });
     if (p === "/" ) { res.writeHead(302, { Location: "/app/" }); return res.end(); }
     if (p === "/app" || p.startsWith("/app/")) return serveFile(res, APP_DIR, p.slice(4) || "/");

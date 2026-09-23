@@ -188,6 +188,9 @@ const Local = {
   save(name, file, text) { return this._j(`/local/save?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: text }); },
   saveImage(name, file, blob) { return this._j(`/local/save-image?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }); },
   exportPreview(name, ver) { return this._j(`/local/export?name=${encodeURIComponent(name)}&ver=${encodeURIComponent(ver || "v1")}`); },
+  createProject(name) { return this._j("/local/project-create?name=" + encodeURIComponent(name), { method: "POST" }); },
+  addPhoto(name, file, blob) { return this._j(`/local/photo?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob }); },
+  deletePhoto(name, file) { return this._j(`/local/photo-delete?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST" }); },
   /* EXE 전용 */
   tools() { return this._j("/local/tools"); },
   toolAct(action, extra) { return this._j("/local/tools?" + new URLSearchParams(Object.assign({ do: action }, extra || {})), { method: "POST" }); },
@@ -238,7 +241,7 @@ const FS = {
       title: "상품 폴더 선택", sub: "프로젝트 루트 안의 폴더입니다. 사진이 든 폴더를 고르면 바로 분석합니다.",
       icon: "folder", tone: "b",
       body: !list.length ? `<div class="note w">${svg("warn")}<div class="nb">프로젝트 폴더가 없습니다. <code>YYMMDD_상품명</code> 폴더를 만들고 사진을 넣은 뒤 다시 여세요.</div></div>`
-        : `<div class="plist">${list.map(p => `<button class="pitem" data-p="${esc(p.name)}"${p.images ? "" : " disabled"}>
+        : `<div class="plist">${list.map(p => `<button class="pitem" data-p="${esc(p.name)}">
             <span class="pic">${svg("folder")}</span>
             <span class="ptx"><b>${esc(p.name)}</b><small>사진 ${p.images}장${p.tiles ? ` · 타일 ${p.tiles}장` : ""}${p.hasBrief ? " · 브리프" : ""}${p.hasOrder ? " · 지시서" : ""}${p.images ? "" : " · 사진 없음"}</small></span>${svg("chevR")}</button>`).join("")}</div>`,
       buttons: [{ label: "닫기", value: null }],
@@ -251,7 +254,6 @@ const FS = {
   async load(name, quiet) {
     let p;
     try { p = await Local.project(name); } catch (e) { if (!quiet) await UI.alert("폴더를 읽지 못했습니다", esc(e.message), "w"); return false; }
-    if (!p.images || !p.images.length) { if (!quiet) await UI.alert("사진이 없습니다", "이 폴더에 상품 사진이 없습니다.", "w"); return false; }
     const switching = name !== Store.get("lastProject", "");
     const files = [];
     for (const im of p.images) { try { const b = await (await fetch(im.url)).blob(); files.push(new File([b], im.name, { type: b.type || "image/png" })); } catch (e) {} }
@@ -273,6 +275,24 @@ const FS = {
     this.summary = Analyze.summarize(this.analysis);
     Store.set("lastProject", name);
     return true;
+  },
+  /* 사진 추가 (파일 선택·드롭·붙여넣기 공통) */
+  async addPhotos(list) {
+    if (!this.name || !Local.ok) { UI.toast("먼저 프로젝트를 여세요", "w"); return 0; }
+    const files = Array.prototype.slice.call(list || []).filter(f => f && (isImg(f.name || "") || /^image\//.test(f.type || "")));
+    if (!files.length) { UI.toast("이미지 파일이 아닙니다", "w"); return 0; }
+    let n = 0;
+    for (const f of files) {
+      let name = f.name && isImg(f.name) ? f.name : `붙여넣기_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.${(f.type || "image/png").split("/")[1].replace("jpeg", "jpg")}`;
+      try { await Local.addPhoto(this.name, name, f); n++; } catch (e) { UI.toast(`${name}: ${e.message}`, "w"); }
+    }
+    if (n) { await this.load(this.name, true); UI.toast(`사진 ${n}장 추가 · 분석 완료`, "o"); Local._projects = null; }
+    return n;
+  },
+  async removePhoto(file) {
+    if (!(await UI.confirm("이 사진을 뺄까요?", `<b>${esc(file)}</b> 을(를) 프로젝트에서 뺍니다. 파일은 <code>_trash</code> 폴더로 옮겨집니다.`, { ok: "빼기", danger: true }))) return false;
+    try { await Local.deletePhoto(this.name, file); await this.load(this.name, true); UI.toast("뺐습니다", "o"); Local._projects = null; return true; }
+    catch (e) { UI.alert("삭제 실패", esc(e.message), "d"); return false; }
   },
 
   async write(filename, text) {
@@ -450,10 +470,9 @@ function renderSide() {
   }
 
   h += `<div class="sgroup"><h4>작업</h4>
-    <button class="sitem" data-act="connect"><span class="ic">${svg("folder")}</span><span class="lb">폴더 연결 · 변경</span></button>
-    <button class="sitem" data-act="saveBrief"><span class="ic">${svg("down")}</span><span class="lb">brief.json 저장</span></button>
+    <button class="sitem" data-act="newproj"><span class="ic">${svg("plus")}</span><span class="lb">새 프로젝트</span></button>
+    <button class="sitem" data-act="addPhotos"><span class="ic">${svg("photo")}</span><span class="lb">사진 추가</span></button>
     <button class="sitem" data-act="exportPreview"><span class="ic">${svg("eye")}</span><span class="lb">클라이언트 프리뷰</span></button>
-    <button class="sitem" data-act="order"><span class="ic">${svg("copy")}</span><span class="lb">지시서 보기</span></button>
     <button class="sitem hi" data-act="make"><span class="ic">${svg("sparkles")}</span><span class="lb">AI로 상세페이지 만들기</span></button>
     ${App.tiles.length ? `<button class="sitem hi" data-act="revise"><span class="ic">${svg("edit")}</span><span class="lb">검수 반영 (AI 수정)</span></button>` : ""}
   </div>`;
@@ -518,7 +537,7 @@ document.addEventListener("keydown", e => {
 const Home = { title: "홈", render(v) {
   const s = FS.summary, p = App.progress(), t = App.tally(), has = !!FS.files.length;
   const steps = [
-    { label: "폴더 · 사진", sub: has ? `사진 ${FS.files.length}장${s && s.low ? ` · 해상도 부족 ${s.low}` : ""}` : "연결 안 됨", done: has, act: "connect" },
+    { label: "사진", sub: has ? `사진 ${FS.files.length}장${s && s.low ? ` · 해상도 부족 ${s.low}` : ""}` : FS.name ? "사진을 넣어주세요" : "프로젝트 없음", done: has, act: FS.name ? "gophotos" : "newproj" },
     { label: "브리프", sub: `${p.done}/${p.total} 섹션`, done: p.done === p.total, act: "gobrief" },
     { label: "제작", sub: App.tiles.length ? `타일 ${App.tiles.length}장` : Local.desktop ? "여기서 바로 제작" : "지시서 → Claude", done: App.tiles.length > 0, act: App.tiles.length ? "gotiles" : "make" },
     { label: "검수", sub: App.tiles.length ? (t.req ? `요청 ${t.req}장 · 영역 ${t.regions}` : "요청 없음") : "타일 없음", done: App.tiles.length > 0 && t.req === 0, act: "goreview" },
@@ -528,10 +547,10 @@ const Home = { title: "홈", render(v) {
   v.innerHTML = `<div class="wrap wide home">
     <div class="hhead">
       <div><div class="eyebrow">${has ? "작업 중" : "시작"}</div><h1 class="pg">${esc(FS.name || "프로젝트를 열어주세요")}</h1>
-        <p class="pgsub">${has ? `${new Date().toLocaleDateString("ko-KR")} · 브리프 ${p.done}/${p.total} · 타일 ${App.tiles.length}장 · 검수 요청 ${t.req}장` : "프로젝트 메뉴에서 폴더를 고르면 사진 분석부터 자동으로 시작합니다."}</p></div>
+        <p class="pgsub">${has ? `${new Date().toLocaleDateString("ko-KR")} · 브리프 ${p.done}/${p.total} · 타일 ${App.tiles.length}장 · 검수 요청 ${t.req}장` : "새 프로젝트를 만들고 사진을 끌어다 놓으면 분석부터 자동으로 시작합니다."}</p></div>
       <div class="hbtns">
         ${has ? `<button class="btn" data-act="exportPreview">${svg("eye")} 프리뷰</button><button class="btn pri" data-act="${App.tiles.length ? "goreview" : "gobrief"}">${App.tiles.length ? svg("check") + " 검수 계속" : svg("edit") + " 브리프 계속"}</button>`
-              : `<button class="btn pri lg" data-act="goprojects">${svg("folder")} 프로젝트 열기</button>`}
+              : `<button class="btn" data-act="goprojects">${svg("folder")} 프로젝트 열기</button><button class="btn pri lg" data-act="newproj">${svg("plus")} 새 프로젝트</button>`}
       </div>
     </div>
     <div class="stepper">${steps.map((st, i) => `<button class="stp${st.done ? " done" : ""}${i === curIdx ? " cur" : ""}" data-act="${st.act}">
@@ -564,12 +583,12 @@ const Projects = { title: "프로젝트", async render(v) {
   v.innerHTML = `<div class="wrap wide">
     <div class="vhead"><h1 class="pg">프로젝트 <span class="cntl">${list.length}</span></h1><div class="sp"></div>
       ${Local.desktop ? `<button class="btn" data-act="openRoot">${svg("ext")} 폴더 열기</button>` : ""}<button class="btn" data-act="newproj">${svg("plus")} 새 프로젝트</button></div>
-    <p class="pgsub">${Local.root ? `<code>${esc(Local.root)}</code> 안의 폴더가 곧 프로젝트입니다.` : "콘솔 옆 폴더가 곧 프로젝트입니다."} 카드를 누르면 열립니다.</p>
-    ${!list.length ? `<div class="empty"><div class="eic">${svg("folder")}</div><b>프로젝트 폴더가 없습니다</b><p><code>YYMMDD_상품명</code> 폴더를 만들고 사진을 넣으세요.</p></div>` : `<div class="pgrid">${list.map((p, i) => {
+    <p class="pgsub">카드를 누르면 열립니다. 새 프로젝트는 이름만 정하면 만들어지고, 사진은 안에서 넣습니다.</p>
+    ${!list.length ? `<div class="empty"><div class="eic">${svg("folder")}</div><b>아직 프로젝트가 없습니다</b><p>위의 <b>새 프로젝트</b>로 시작하세요.</p></div>` : `<div class="pgrid">${list.map((p, i) => {
       const st = stage(p), cur = p.name === FS.name, span = p.tileFirst && p.tileLast ? p.tileLast - p.tileFirst : null;
       return `<button class="pcard${cur ? " cur" : ""}" data-p="${esc(p.name)}" style="animation-delay:${i * 40}ms">
         <div class="pch"><span class="pic">${svg("folder")}</span><span class="ptt"><b>${esc(p.name)}</b><small>${fmtAgo(p.mtime)} 작업 · 사진 ${p.images}장</small></span><i class="pst ${st[1]}">${st[0]}</i>${cur ? `<i class="pcur">열림</i>` : ""}</div>
-        <div class="pstat"><span><small>타일</small><b>${p.tiles}</b></span><span><small>내보내기</small><b>${p.exports}</b></span><span><small>브리프</small><b>${p.hasBrief ? "✓" : "–"}</b></span><span><small>지시서</small><b>${p.hasOrder ? "✓" : "–"}</b></span></div>
+        <div class="pstat"><span><small>사진</small><b>${p.images}</b></span><span><small>타일</small><b>${p.tiles}</b></span><span><small>내보내기</small><b>${p.exports}</b></span><span><small>브리프</small><b>${p.hasBrief || p.hasOrder ? "✓" : "–"}</b></span></div>
         <dl class="pkv"><dt>시작</dt><dd>${fmtD(p.ctime)}</dd><dt>최근 작업</dt><dd>${fmtD(p.mtime)}</dd><dt>타일 제작</dt><dd>${span != null ? `${fmtD(p.tileFirst)} → ${fmtDur(span)} 소요` : "—"}</dd></dl>
         <div class="pgo">${cur ? "이어서 작업" : "열기"} ${svg("arrowR")}</div></button>`; }).join("")}</div>`}
   </div>`;
@@ -599,7 +618,7 @@ const Brief = { title: "브리프", render(v) {
   </div>`;
   const ab = $("#actbar"); ab.hidden = false;
   ab.innerHTML = `<div class="prog"><i id="pbar"></i></div><span class="pcnt" id="pcnt"></span><div style="flex:1"></div>
-    <button class="btn" data-act="saveBrief">${svg("down")} 저장</button><button class="btn" data-act="order">${svg("copy")} 요약 보기</button>
+    <span class="hint" style="margin:0">자동 저장됩니다</span>
     <button class="btn pri" data-act="make">${svg("sparkles")} AI로 상세페이지 만들기</button>`;
   ab.onclick = e => { const a = e.target.closest("[data-act]"); if (a) ACT[a.dataset.act](); };
 
@@ -611,6 +630,7 @@ const Brief = { title: "브리프", render(v) {
     const ap = e.target.closest("[data-apply]"); if (ap) { applySection(ap.dataset.apply); return; }
     const pv = e.target.closest("[data-prev]"); if (pv) { const i = SECTIONS.findIndex(x => x.id === pv.dataset.prev); if (i > 0) openCard(SECTIONS[i - 1].id); return; }
     const h = e.target.closest(".chead"); if (h) { toggleCard(h.parentElement); return; }
+    const dp = e.target.closest("[data-del-photo]"); if (dp) { FS.removePhoto(dp.dataset.delPhoto).then(ok => { if (ok) { go("brief"); setTimeout(() => openCard("photos", true), 60); } }); return; }
     const th = e.target.closest(".th[data-src]"); if (th) { UI.lightbox(th.dataset.src); return; }
     const a = e.target.closest("[data-act]"); if (a) { ACT[a.dataset.act](); return; }
     const q = e.target.closest("[data-quick]"); if (q) { const ta = $("#" + q.dataset.for, v); ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, "") + "\n" : "") + q.dataset.quick; ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); }
@@ -624,9 +644,20 @@ const Brief = { title: "브리프", render(v) {
     e.preventDefault(); t.value = t.placeholder; t.dispatchEvent(new Event("input", { bubbles: true }));
     UI.toast("예시문을 채웠습니다 — 내 상품 내용으로 고쳐주세요");
   });
-  const first = SECTIONS.find(x => x.id !== "photos" && !App.secDone(x.id)) || SECTIONS[1];
+  v.addEventListener("dragover", e => { if (e.dataTransfer && Array.prototype.some.call(e.dataTransfer.types || [], t => t === "Files")) { e.preventDefault(); v.classList.add("dropping"); } });
+  v.addEventListener("dragleave", e => { if (!v.contains(e.relatedTarget)) v.classList.remove("dropping"); });
+  v.addEventListener("drop", async e => { v.classList.remove("dropping"); if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); if (await FS.addPhotos(e.dataTransfer.files)) { go("brief"); setTimeout(() => openCard("photos", true), 60); } });
+  const first = FS.analysis.length ? (SECTIONS.find(x => x.id !== "photos" && !App.secDone(x.id)) || SECTIONS[1]) : SECTIONS[0];
   openCard(first.id, true);
 }};
+/* 클립보드 붙여넣기 → 사진 (입력칸 밖에서) */
+document.addEventListener("paste", async e => {
+  if (!FS.name || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const items = Array.prototype.slice.call((e.clipboardData || {}).items || []).filter(i => i.kind === "file" && /^image\//.test(i.type));
+  if (!items.length) return;
+  e.preventDefault();
+  if (await FS.addPhotos(items.map(i => i.getAsFile()).filter(Boolean))) { if (App.view !== "brief") go("brief"); setTimeout(() => openCard("photos", true), 60); }
+});
 
 function buildCard(sec, g, eg, s) {
   const isLast = sec.id === SECTIONS[SECTIONS.length - 1].id, done = App.secDone(sec.id);
@@ -639,19 +670,19 @@ function buildCard(sec, g, eg, s) {
   return c;
 }
 function shotCard(a, i) {
-  if (a.error) return `<div class="shot"><div class="mt"><div class="fn">${esc(a.name)}</div><div class="dm" style="color:var(--danger)">${esc(a.error)}</div></div></div>`;
+  if (a.error) return `<div class="shot"><button class="shx" data-del-photo="${esc(a.name)}" title="이 사진 빼기">${svg("x")}</button><div class="mt"><div class="fn">${esc(a.name)}</div><div class="dm" style="color:var(--danger)">${esc(a.error)}</div></div></div>`;
   const grade = a.resGrade === "good" ? ["ok", "고해상도"] : a.resGrade === "ok" ? ["n", "사용 가능"] : ["d", "해상도 부족"];
   const bg = a.bgSimple === "high" ? ["ok", "누끼 쉬움"] : a.bgSimple === "mid" ? ["n", "누끼 보통"] : ["w", "누끼 어려움"];
   const br = a.bright < .28 ? ["w", "어두움"] : a.bright > .82 ? ["w", "밝음"] : ["n", "노출 적정"];
-  return `<div class="shot" style="animation-delay:${i * 60}ms"><div class="th" data-src="${a.thumb}"><img src="${a.thumb}" alt=""></div>
+  return `<div class="shot" style="animation-delay:${i * 60}ms"><button class="shx" data-del-photo="${esc(a.name)}" title="이 사진 빼기">${svg("x")}</button><div class="th" data-src="${a.thumb}"><img src="${a.thumb}" alt=""></div>
     <div class="mt"><div class="fn" title="${esc(a.name)}">${esc(a.name)}</div><div class="dm">${a.w} × ${a.h} · ${a.orient} · ${fmtKB(a.size)}</div>
     <div class="pal">${a.pal.map(p => `<i style="background:${p.hex}" title="${p.hex} ${p.pct}%"></i>`).join("")}</div>
     <div class="tags"><span class="tag ${grade[0]}">${grade[1]}</span><span class="tag ${bg[0]}">${bg[1]}</span><span class="tag ${br[0]}">${br[1]}</span></div></div></div>`;
 }
 const BODY = {
-  photos: (g, eg, s) => !FS.analysis.length
-    ? `<div class="empty sm"><div class="eic">${svg("photo")}</div><b>분석할 사진이 없습니다</b><p>상품 폴더를 연결하면 자동으로 분석합니다.</p><button class="btn pri" data-act="connect">${svg("folder")} 폴더 연결</button></div>`
-    : `<div class="note ${s.low ? "w" : "o"}">${svg(s.low ? "warn" : "check")}<div class="nb">${s.low
+  photos: (g, eg, s) => (FS.name ? `<div class="dropz" data-act="addPhotos"><div class="dzi">${svg("photo")}</div><div><b>사진을 여기에 끌어다 놓거나 클릭해서 고르세요</b><small>Ctrl+V 로 클립보드 이미지도 됩니다 · 각도별 2~4장 · 긴 변 1200px 이상 권장</small></div><span class="btn sm">${svg("plus")} 사진 추가</span></div>` : `<div class="note w">${svg("warn")}<div class="nb">먼저 <b>새 프로젝트</b>를 만드세요.</div></div>`) + (!FS.analysis.length
+    ? `<p class="hint" style="margin:10px 0 0">아직 사진이 없습니다. 사진이 들어오면 해상도·색·배경을 바로 분석합니다.</p>`
+    : `<div class="note ${s.low ? "w" : "o"}" style="margin-top:12px">${svg(s.low ? "warn" : "check")}<div class="nb">${s.low
         ? `<b>${s.low}장이 권장 해상도(${SET.minLong}px) 미만.</b> ${esc(s.lowNames.join(" · "))}<br>이대로 진행하면 라벨 글씨가 뭉개지거나 AI가 지어낸 글자로 바뀔 수 있습니다. 제품이 나오는 타일은 원본을 업스케일해 합성합니다.`
         : `<b>해상도 양호.</b> 전 사진이 권장 기준을 넘습니다. 제품이 나오는 타일은 원본 픽셀을 그대로 합성합니다.`}</div></div>
       <dl class="kv"><dt>평균 긴 변</dt><dd>${s.avgLong}px ${s.avgLong >= 2400 ? "— 2K 타일에 충분" : s.avgLong >= 1200 ? "— 사용 가능" : "— 부족"}</dd>
@@ -659,7 +690,7 @@ const BODY = {
         <dt>누끼 적합</dt><dd>${s.cuttable}장</dd>
         <dt>추출 포인트 컬러</dt><dd><i class="sw" style="background:${s.accent}"></i>${s.accent}</dd></dl>
       <p class="hint" style="margin:10px 0 12px">여기서 하는 건 <b>기술 분석</b>입니다. 사진에 무엇이 찍혔는지는 AI가 제작할 때 직접 보고 판단합니다.</p>
-      <div class="shots">${FS.analysis.map(shotCard).join("")}</div>`,
+      <div class="shots">${FS.analysis.map(shotCard).join("")}</div>`),
   product: (g, eg) => `<p class="hint">이것만 있어도 기획안 초안은 나옵니다.</p>
     <div class="row2"><div class="fld"><label>상품명</label><input type="text" data-k="product.name" value="${esc(g("product", "name"))}" placeholder="${esc(eg.name)}"></div>
       <div class="fld"><label>판매가 / 구성 <span class="opt">선택</span></label><input type="text" data-k="product.price" value="${esc(g("product", "price"))}" placeholder="${esc(eg.price)}"></div></div>
@@ -727,7 +758,7 @@ function applySection(id) {
   const miss = need.filter(k => Array.isArray(b[k]) ? !b[k].length : !String(b[k] || "").trim());
   if (miss.length) { const card = $(`.card[data-sec="${id}"]`); const f = card && (card.querySelector(`[data-k="${id}.${miss[0]}"]`) || card.querySelector(`[data-radio="${id}.${miss[0]}"] input`));
     UI.toast("필수 항목을 먼저 채워주세요", "w"); card.classList.add("shake"); setTimeout(() => card.classList.remove("shake"), 500); if (f && f.focus) f.focus(); return; }
-  App.saveBrief(); refreshCardMeta(); bumpProgress();
+  App.saveBrief(); refreshCardMeta(); bumpProgress(); ACT.saveBrief(true);
   const i = SECTIONS.findIndex(x => x.id === id);
   if (i < SECTIONS.length - 1) { openCard(SECTIONS[i + 1].id); return; }
   $$(".card[data-sec]").forEach(x => x.classList.remove("open")); App.curSec = null; ACT.make();
@@ -1122,13 +1153,29 @@ async function aiReady() {
 }
 const ACT = {
   gobrief() { go("brief"); }, gotiles() { go("tiles"); }, goreview() { go("review"); }, goprojects() { go("projects"); }, reconnect() { go("settings"); },
-  newproj() { UI.dialog({ title: "새 프로젝트", sub: "폴더가 곧 프로젝트입니다.", icon: "plus", tone: "b", body: `<ol class="steps"><li><span class="n">1</span><span><b>프로젝트 루트에 폴더를 만드세요</b><small><code>YYMMDD_상품명</code> · 예: <code>${esc(new Date().toISOString().slice(2, 10).replace(/-/g, ""))}_상품명</code></small></span></li><li><span class="n">2</span><span><b>상품 사진을 넣으세요</b><small>각도별 2~4장, 긴 변 1200px 이상 권장 — 클수록 제품이 덜 변합니다</small></span></li><li><span class="n">3</span><span><b>이 화면에서 카드를 누르면 열립니다</b><small>사진 분석 → 브리프로 바로 이어집니다.</small></span></li></ol>`, buttons: [{ label: "닫기", value: 0 }].concat(Local.desktop ? [{ label: "루트 폴더 열기", value: 2 }] : []).concat([{ label: "목록 새로고침", value: 1, kind: "pri" }]) }).then(r => { if (r === 1) go("projects"); if (r === 2) ACT.openRoot(); }); },
+  async newproj() {
+    if (!Local.ok) return UI.alert("서버가 없습니다", "EXE 또는 <code>콘솔_열기.bat</code> 으로 실행해야 프로젝트를 만들 수 있습니다.", "w");
+    const today = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    const v = await UI.dialog({ title: "새 프로젝트", sub: "상품 이름만 정하면 됩니다. 사진은 다음 화면에서 끌어다 넣으세요.", icon: "plus", tone: "b",
+      body: `<div class="fld"><label>상품 이름</label><input type="text" id="npName" placeholder="예: 벤딕트 에어건" maxlength="40"></div><p class="hint">폴더 이름은 <code>${today}_상품이름</code> 으로 만들어집니다.</p>`,
+      buttons: [{ label: "취소", value: 0 }, { label: "만들기", value: 1, kind: "pri" }], onOpen(d) { const i = $("#npName", d); setTimeout(() => i.focus(), 60); i.onkeydown = e => { if (e.key === "Enter") UI._close(1); }; } });
+    const nm = ($("#npName") && $("#npName").value.trim()) || ""; if (v !== 1) return; if (!nm) return UI.toast("상품 이름을 적어주세요", "w");
+    try { const j = await Local.createProject(`${today}_${nm}`); Local._projects = null; App.brief = {}; App.review = {}; await FS.load(j.name, true); Store.set("lastProject", j.name); UI.toast(j.existed ? "이미 있는 프로젝트를 열었습니다" : `${j.name} 만들었습니다 — 사진을 넣어주세요`, "o"); go("brief"); setTimeout(() => openCard("photos", true), 60); }
+    catch (e) { UI.alert("만들지 못했습니다", esc(e.message), "d"); }
+  },
+  gophotos() { go("brief"); setTimeout(() => openCard("photos", true), 60); },
+  addPhotos() {
+    if (!FS.name) return ACT.newproj();
+    let inp = $("#photoPick"); if (!inp) { inp = el("input"); inp.type = "file"; inp.id = "photoPick"; inp.multiple = true; inp.accept = "image/*"; inp.hidden = true; document.body.appendChild(inp); }
+    inp.value = ""; inp.onchange = async () => { if (await FS.addPhotos(inp.files)) { go("brief"); setTimeout(() => openCard("photos", true), 60); } }; inp.click();
+  },
   async openRoot() { try { await Local.toolAct("open-root"); } catch (e) { UI.toast(e.message, "w"); } },
   async runClaudeTerm() { if (!FS.name) return UI.toast("먼저 프로젝트를 여세요", "w"); try { const j = await Local.toolAct("run-claude", { name: FS.name }); UI.toast(j.message, "o"); } catch (e) { UI.alert("실행 실패", esc(e.message), "d"); } },
   async connect() { if (await FS.connect()) { UI.toast(`${FS.name} · 사진 ${FS.files.length}장 분석 완료`, "o"); go("brief"); } },
-  async saveBrief() {
-    const r = await FS.write("brief.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, photos: photoRows(), photoSummary: FS.summary }, null, 2));
-    UI.toast(r.ok ? `저장 완료 — ${r.where}` : "brief.json 다운로드됨 — 프로젝트 폴더로 옮겨주세요", r.ok ? "o" : "w");
+  async saveBrief(quiet) {
+    if (!FS.name || !Local.ok) return;
+    try { await Local.save(FS.name, "brief.json", JSON.stringify({ project: FS.name, savedAt: new Date().toISOString(), brief: App.brief, photos: photoRows(), photoSummary: FS.summary }, null, 2)); if (!quiet) UI.toast("저장했습니다", "o"); }
+    catch (e) { if (!quiet) UI.toast("저장 실패: " + e.message, "w"); }
   },
   async order() {
     const txt = buildOrder();
@@ -1144,11 +1191,12 @@ const ACT = {
     const r = await FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order, photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: (App.brief.req || {}).photoMode || "keep" }, null, 2));
     const cmd = `${FS.name || "프로젝트"} 만들어줘`;
     const rd = Local.desktop ? await aiReady() : { ok: false };
-    const btns = [{ label: "닫기", value: 0 }, { label: "지시서 전체 복사", value: 2 }, { label: "명령 복사", value: 1 }];
+    if (!FS.analysis.length) return UI.alert("사진이 없습니다", "제품 사진을 먼저 넣어주세요. 사진 없이는 제품이 들어간 타일을 만들 수 없습니다.", "w");
+    const btns = [{ label: "닫기", value: 0 }];
     if (Local.desktop) btns.push(rd.ok ? { label: "여기서 바로 제작", value: 3, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" });
-    else btns[2].kind = "pri";
-    const v = await UI.dialog({ title: r.ok ? "지시서를 저장했습니다" : "지시서를 내려받았습니다", sub: r.ok ? `<code>${esc(r.where)}</code>` : "order.json 을 프로젝트 폴더로 옮겨주세요.", icon: "sparkles", tone: rd.ok ? "o" : "b",
-      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행 로그가 오른쪽 아래에 뜹니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + "." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p><pre class="cmd">${esc(cmd)}</pre><p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${(App.brief.req || {}).photoMode === "reinterpret" ? "AI 재해석" : "원본 합성"}</p>`,
+    else btns.push({ label: "명령 복사", value: 1, kind: "pri" });
+    const v = await UI.dialog({ title: "제작 준비가 됐습니다", sub: `브리프와 사진 분석을 정리했습니다.`, icon: "sparkles", tone: rd.ok ? "o" : "b",
+      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행 로그가 오른쪽 아래에 뜹니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + "." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}<p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${(App.brief.req || {}).photoMode === "reinterpret" ? "AI 재해석" : "원본 합성"}</p>`,
       buttons: btns });
     if (v === 3) return ACT.runAI("make");
     if (v === 4) return go("settings");
