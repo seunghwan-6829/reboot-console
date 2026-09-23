@@ -148,9 +148,10 @@ EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm ru
 |---|---|
 | **홈** | 대시보드 — 5단계 스테퍼(폴더·브리프·제작·검수·전달), 현황, 타일 미리보기. 실행하면 항상 여기서 시작 |
 | **프로젝트** | 루트 안 폴더 카드 — 시작일·최근 작업·타일 제작 소요·내보내기 수. 카드 클릭으로 전환 |
-| **브리프** | 0단계 **사진** — 드롭존(끌어놓기·클릭·Ctrl+V), 카드마다 ✕ 로 빼기(파일은 `_trash/` 로 이동) + 자동 분석. 1~7단계 아코디언, 6단계 **제품 사진 처리**. JSON 저장/지시서 버튼은 없앰 — 브리프는 자동 저장, `order.json`·`review.json` 은 AI 가 읽는 내부 파일 |
+| **브리프** | 0단계 **사진 분석**(자동) + 7섹션 아코디언. 6단계에 **제품 사진 처리**(원본 그대로 합성 / AI 재해석) |
 | **타일** | 이어붙이기(대지 중앙 · Ctrl+휠/±/버튼 배율 25~200%) / 그리드. 왼쪽 목록을 **잡고 끌면 순서가 바뀌고** `tiles/manifest.json._order` 에 저장 → 타일·내보내기에 반영 |
 | **검수** | 장마다 **영역 잡기(D)** → 이미지 위를 끌어 빨간 박스 → 번호별 코멘트. 한 장에 여러 개. 장 전체 요청은 아래 칸. 판정·좋았던점·연장 UI는 없앴음. **검수 반영 — AI 수정 실행** 이 `review.json` + `review/NN_marked.png` 를 만들고 EXE 에선 Claude Code 를 바로 돌림 |
+| **클라우드** | Vercel 배포본에서만 활성 |
 | **설정** | **연결**(Claude Code 로그인 / Higgsfield MCP 등록·인증 / Codex 로그인 — 전부 **창 없이 브라우저 로그인**, 상태는 자동 폴링) · 테마 · 작업 설정 · 초기화 |
 
 **흐름** — 홈 **새 프로젝트**(이름만) → 브리프 0단계에 사진을 **끌어다 놓기 / 클릭 선택 / Ctrl+V** → 즉시 분석 → **자동으로 브리프로 이동** → 섹션마다 적용 → 마지막에 **AI로 상세페이지 만들기** → `order.json` 저장 + 한 줄 명령 안내(`○○ 만들어줘`) → 대화창에 붙여넣기.
@@ -300,6 +301,7 @@ NO margin band and NO vignette at the top or bottom edge.
 | **`reframe` 은 영상 전용** | 이미지 캔버스 확장은 `outpaint_image` |
 | **프롬프트 속 한국어 오타** | 내가 틀리게 적으면 그대로 렌더됨. 보내기 전에 한 번 더 읽을 것 |
 | **(옛 웹버전) 8777 이중 바인딩** | 진짜 원인은 Python `HTTPServer` 기본값 `SO_REUSEADDR` — Windows에선 **떠 있는 포트에 한 번 더 바인딩이 성공**해 서버가 둘이 되고 요청은 옛 쪽으로 감. `_launch.py` 가 `allow_reuse_address=False` 로 바인딩 실패를 강제하고, 실패 시 옛 서버에 `POST /local/shutdown` 을 보내 **인수**한다. 이제 `netstat/taskkill` 불필요. 단 2026-09-22 이전 코드로 뜬 서버는 shutdown 라우트가 없어 한 번은 수동 종료 |
+| **`claude -p` 헤드리스** | EXE 의 제작·검수 반영은 `claude -p "<prompt>" --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Read Write Edit MultiEdit Glob Grep Bash mcp__higgsfield WebFetch` 로 돈다. 허용 밖 도구는 거부되고 멈추지 않음. 로그인은 `claude auth status --json` 으로 판정 |
 | **`claude -p` 헤드리스** | EXE 의 제작·검수 반영은 `claude -p "<prompt>" --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Read Write Edit MultiEdit Glob Grep Bash mcp__higgsfield WebFetch` 로 돈다. 허용 밖 도구는 거부되고 멈추지 않음. 로그인은 `claude auth status --json` 으로 판정 |
 | **`electron .` 한글 경로** | 개발 실행 시 `electron .` 은 패키지 해석에 실패해 아무 출력 없이 종료(exit 127). `electron main.js` 로 실행할 것. 빌드된 EXE 는 무관 |
 | **Electron 메인 오류는 안 보임** | 창이 없으면 예외가 어디에도 안 뜸 → `%APPDATA%\re-boot 콘솔\main-error.log` 확인 |
