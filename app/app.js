@@ -191,6 +191,7 @@ const Local = {
   createProject(name) { return this._j("/local/project-create?name=" + encodeURIComponent(name), { method: "POST" }); },
   addPhoto(name, file, blob) { return this._j(`/local/photo?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob }); },
   deletePhoto(name, file) { return this._j(`/local/photo-delete?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST" }); },
+  pasteClip(name) { return this._j(`/local/paste?name=${encodeURIComponent(name)}`, { method: "POST" }); },
   /* EXE 전용 */
   tools() { return this._j("/local/tools"); },
   toolAct(action, extra) { return this._j("/local/tools?" + new URLSearchParams(Object.assign({ do: action }, extra || {})), { method: "POST" }); },
@@ -263,7 +264,7 @@ const FS = {
     if (!this.name || !Local.ok) { UI.toast("먼저 프로젝트를 여세요", "w"); return 0; }
     const files = Array.prototype.slice.call(list || []).filter(f => f && (isImg(f.name || "") || /^image\//.test(f.type || "")));
     if (!files.length) { UI.toast("이미지 파일이 아닙니다", "w"); return 0; }
-    let n = 0;
+    let n = 0; UI.toast(`사진 ${files.length}장 올리는 중…`);
     for (const f of files) {
       let name = f.name && isImg(f.name) ? f.name : `붙여넣기_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.${(f.type || "image/png").split("/")[1].replace("jpeg", "jpg")}`;
       try { await Local.addPhoto(this.name, name, f); n++; } catch (e) { UI.toast(`${name}: ${e.message}`, "w"); }
@@ -622,6 +623,7 @@ const Brief = { title: "브리프", render(v) {
     if (e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey) return;
     const t = e.target; if (!t.matches || !t.matches("input[type=text][data-k], textarea[data-k]")) return;
     if (!SET.tabFill || t.hasAttribute("data-notab") || t.value.trim() || !t.placeholder) return;
+    if (App.eg() === EG._) { e.preventDefault(); UI.toast("카테고리를 먼저 고르면 그 업종의 예시문이 채워집니다", "w"); return; }   // 안내문은 채우지 않는다
     e.preventDefault(); t.value = t.placeholder; t.dispatchEvent(new Event("input", { bubbles: true }));
     UI.toast("예시문을 채웠습니다 — 내 상품 내용으로 고쳐주세요");
   });
@@ -631,9 +633,29 @@ const Brief = { title: "브리프", render(v) {
   const first = FS.analysis.length ? (SECTIONS.find(x => x.id !== "photos" && !App.secDone(x.id)) || SECTIONS[1]) : SECTIONS[0];
   openCard(first.id, true);
 }};
-/* 클립보드 붙여넣기 → 사진 (입력칸 밖에서) */
+/* 클립보드 붙여넣기 → 사진.
+   EXE: Ctrl+V 를 keydown 에서 잡아 메인 프로세스가 클립보드를 직접 읽는다(캡처 이미지·탐색기 파일 복사 모두).
+   그 외: DOM paste 이벤트(이미지 파일 항목) */
+let pasteBusy = false;
+async function pasteFromClipboard() {
+  if (pasteBusy) return; if (!FS.name) { UI.toast("먼저 프로젝트를 만드세요 — 붙여넣을 곳이 없습니다", "w"); return; }
+  pasteBusy = true; UI.toast("클립보드 확인 중…");
+  try {
+    const j = await Local.pasteClip(FS.name);
+    await FS.load(FS.name, true); Local._projects = null;
+    UI.toast(`붙여넣기 ${j.files.length}장 추가${j.w ? ` (${j.w}×${j.h})` : ""} · 분석 완료`, "o");
+    if (App.view !== "brief") go("brief"); else go("brief"); setTimeout(() => openCard("photos", true), 60);
+  } catch (e) { UI.toast(/이미지가 없습니다/.test(e.message) ? "클립보드에 이미지가 없습니다 — 캡처하거나 파일을 복사한 뒤 Ctrl+V" : "붙여넣기 실패: " + e.message, "w"); }
+  finally { pasteBusy = false; }
+}
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "v" || e.shiftKey || e.altKey) return;
+  if (/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName) || $(".ovl.on")) return;   // 글 입력 중이면 평소 붙여넣기
+  if (!Local.desktop) return;                                                               // 웹은 paste 이벤트 경로
+  e.preventDefault(); pasteFromClipboard();
+});
 document.addEventListener("paste", async e => {
-  if (!FS.name || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  if (Local.desktop || !FS.name || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
   const items = Array.prototype.slice.call((e.clipboardData || {}).items || []).filter(i => i.kind === "file" && /^image\//.test(i.type));
   if (!items.length) return;
   e.preventDefault();
@@ -661,7 +683,7 @@ function shotCard(a, i) {
     <div class="tags"><span class="tag ${grade[0]}">${grade[1]}</span><span class="tag ${bg[0]}">${bg[1]}</span><span class="tag ${br[0]}">${br[1]}</span></div></div></div>`;
 }
 const BODY = {
-  photos: (g, eg, s) => (FS.name ? `<div class="dropz" data-act="addPhotos"><div class="dzi">${svg("photo")}</div><div><b>사진을 여기에 끌어다 놓거나 클릭해서 고르세요</b><small>Ctrl+V 로 클립보드 이미지도 됩니다 · 각도별 2~4장 · 긴 변 1200px 이상 권장</small></div><span class="btn sm">${svg("plus")} 사진 추가</span></div>` : `<div class="note w">${svg("warn")}<div class="nb">먼저 <b>새 프로젝트</b>를 만드세요.</div></div>`) + (!FS.analysis.length
+  photos: (g, eg, s) => (FS.name ? `<div class="dropz" data-act="addPhotos"><div class="dzi">${svg("photo")}</div><div><b>사진을 여기에 끌어다 놓거나 클릭해서 고르세요</b><small>Ctrl+V 로 클립보드 이미지도 됩니다 · 각도별 2~4장 · 긴 변 1200px 이상 권장</small></div><span class="btn sm">${svg("plus")} 사진 추가</span>${Local.desktop ? `<span class="btn sm ghost" data-act="pasteClip" title="Ctrl+V">${svg("copy")} 붙여넣기</span>` : ""}</div>` : `<div class="note w">${svg("warn")}<div class="nb">먼저 <b>새 프로젝트</b>를 만드세요.</div></div>`) + (!FS.analysis.length
     ? `<p class="hint" style="margin:10px 0 0">아직 사진이 없습니다. 사진이 들어오면 해상도·색·배경을 바로 분석합니다.</p>`
     : `<div class="note ${s.low ? "w" : "o"}" style="margin-top:12px">${svg(s.low ? "warn" : "check")}<div class="nb">${s.low
         ? `<b>${s.low}장이 권장 해상도(${SET.minLong}px) 미만.</b> ${esc(s.lowNames.join(" · "))}<br>이대로 진행하면 라벨 글씨가 뭉개지거나 AI가 지어낸 글자로 바뀔 수 있습니다. 제품이 나오는 타일은 원본을 업스케일해 합성합니다.`
@@ -1097,13 +1119,15 @@ const ACT = {
     if (!Local.ok) return UI.alert("서버가 없습니다", "<b>re-boot 콘솔.exe</b> 로 실행해야 합니다.", "w");
     const today = new Date().toISOString().slice(2, 10).replace(/-/g, "");
     const v = await UI.dialog({ title: "새 프로젝트", sub: "상품 이름만 정하면 됩니다. 사진은 다음 화면에서 끌어다 넣으세요.", icon: "plus", tone: "b",
-      body: `<div class="fld"><label>상품 이름</label><input type="text" id="npName" placeholder="예: 벤딕트 에어건" maxlength="40"></div><p class="hint">폴더 이름은 <code>${today}_상품이름</code> 으로 만들어집니다.</p>`,
+      body: `<div class="fld"><label>상품 이름</label><input type="text" id="npName" placeholder="예: 벤딕트 에어건" maxlength="40"></div><p class="hint">폴더 이름은 <code>${today}_상품이름</code> 으로 만들어집니다. (날짜는 자동으로 붙으니 이름만)</p>`,
       buttons: [{ label: "취소", value: 0 }, { label: "만들기", value: 1, kind: "pri" }], onOpen(d) { const i = $("#npName", d); setTimeout(() => i.focus(), 60); i.onkeydown = e => { if (e.key === "Enter") UI._close(1); }; } });
     const nm = ($("#npName") && $("#npName").value.trim()) || ""; if (v !== 1) return; if (!nm) return UI.toast("상품 이름을 적어주세요", "w");
-    try { const j = await Local.createProject(`${today}_${nm}`); Local._projects = null; App.brief = {}; App.review = {}; await FS.load(j.name, true); Store.set("lastProject", j.name); UI.toast(j.existed ? "이미 있는 프로젝트를 열었습니다" : `${j.name} 만들었습니다 — 사진을 넣어주세요`, "o"); go("brief"); setTimeout(() => openCard("photos", true), 60); }
+    const folder = /^\d{6}_/.test(nm) ? nm : `${today}_${nm}`;   // 이미 날짜가 붙어 있으면 다시 붙이지 않는다
+    try { const j = await Local.createProject(folder); Local._projects = null; App.brief = {}; App.review = {}; await FS.load(j.name, true); Store.set("lastProject", j.name); UI.toast(j.existed ? "이미 있는 프로젝트를 열었습니다" : `${j.name} 만들었습니다 — 사진을 넣어주세요`, "o"); go("brief"); setTimeout(() => openCard("photos", true), 60); }
     catch (e) { UI.alert("만들지 못했습니다", esc(e.message), "d"); }
   },
   gophotos() { go("brief"); setTimeout(() => openCard("photos", true), 60); },
+  pasteClip() { pasteFromClipboard(); },
   addPhotos() {
     if (!FS.name) return ACT.newproj();
     let inp = $("#photoPick"); if (!inp) { inp = el("input"); inp.type = "file"; inp.id = "photoPick"; inp.multiple = true; inp.accept = "image/*"; inp.hidden = true; document.body.appendChild(inp); }

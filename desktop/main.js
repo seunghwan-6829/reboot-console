@@ -7,7 +7,7 @@
    설정(userData/config.json) → 포터블 EXE 위치 순으로 정한다.
    ═══════════════════════════════════════════════════════ */
 "use strict";
-const { app, BrowserWindow, dialog, shell, nativeImage, Menu } = require("electron");
+const { app, BrowserWindow, dialog, shell, nativeImage, Menu, clipboard } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -30,6 +30,7 @@ const HIGGSFIELD_URL = "https://mcp.higgsfield.ai/mcp";
 const IS_WIN = process.platform === "win32";
 
 let ROOT = "", PORT = 0, win = null;
+const APP_VERSION = (() => { try { return require("./package.json").version; } catch (e) { return app.getVersion(); } })();   // 개발 실행에서도 앱 버전
 
 /* ── 설정 ─────────────────────────────────────────────── */
 const cfgPath = () => path.join(app.getPath("userData"), "config.json");
@@ -266,7 +267,7 @@ const RUN = {
 
 /* ── 자동 업데이트 (GitHub Releases · electron-updater) ── */
 const UPD = {
-  state: "idle", version: "", notes: "", progress: 0, error: "", checkedAt: 0, current: app.getVersion(),
+  state: "idle", version: "", notes: "", progress: 0, error: "", checkedAt: 0, current: APP_VERSION,
   get() { return { ok: true, state: this.state, version: this.version, notes: this.notes, progress: this.progress, error: this.error, current: this.current, checkedAt: this.checkedAt, portable: !!process.env.PORTABLE_EXECUTABLE_DIR, packaged: app.isPackaged }; },
   init() {
     if (!autoUpdater || !app.isPackaged) { this.state = "unsupported"; return; }
@@ -305,7 +306,7 @@ function readBody(req, max) { return new Promise((res, rej) => { const ch = []; 
 async function handle(req, res) {
   const u = new URL(req.url, "http://127.0.0.1"), q = u.searchParams, p = decodeURIComponent(u.pathname);
   try {
-    if (p === "/local/ping") return json(res, 200, { ok: true, root: ROOT, desktop: true, version: app.getVersion() });
+    if (p === "/local/ping") return json(res, 200, { ok: true, root: ROOT, desktop: true, version: APP_VERSION });
     if (p === "/local/projects") return json(res, 200, { ok: true, projects: ROOT ? projectList() : [] });
     if (p === "/local/project") { const n = q.get("name") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" }); return json(res, 200, Object.assign({ ok: true }, scan(n))); }
     if (p === "/local/export") { const n = q.get("name") || "", ver = (q.get("ver") || "v1").slice(0, 12); if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
@@ -357,6 +358,25 @@ async function handle(req, res) {
       while (fs.existsSync(out)) out = path.join(ROOT, n, `${stem} (${k++})${ext}`);
       fs.writeFileSync(out, body); return json(res, 200, { ok: true, file: path.basename(out), size: body.length });
     }
+    if (p === "/local/paste" && req.method === "POST") {
+      // 렌더러의 paste 이벤트에 의존하지 않고 메인에서 클립보드 이미지를 직접 읽는다 (메뉴 없는 창에서도 Ctrl+V 확실히)
+      const n = q.get("name") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
+      const img = clipboard.readImage();
+      if (!img || img.isEmpty()) {
+        // 파일 복사(탐색기 Ctrl+C) 도 받는다
+        let files = [];
+        try { const raw = clipboard.readBuffer("FileNameW"); if (raw && raw.length) files = raw.toString("ucs2").split("\0").filter(Boolean); } catch (e) {}
+        files = files.filter(f => IMG.has(path.extname(f).toLowerCase()) && fs.existsSync(f));
+        if (!files.length) return json(res, 200, { ok: false, empty: true, error: "클립보드에 이미지가 없습니다" });
+        const saved = [];
+        for (const f of files) { let out = path.join(ROOT, n, path.basename(f)), k = 1; const stem = path.basename(f).replace(/\.[^.]+$/, ""), ext = path.extname(f); while (fs.existsSync(out)) out = path.join(ROOT, n, `${stem} (${k++})${ext}`); fs.copyFileSync(f, out); saved.push(path.basename(out)); }
+        return json(res, 200, { ok: true, files: saved });
+      }
+      const sz = img.getSize(); const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+      let out = path.join(ROOT, n, `붙여넣기_${stamp}.png`), k = 1; while (fs.existsSync(out)) out = path.join(ROOT, n, `붙여넣기_${stamp} (${k++}).png`);
+      fs.writeFileSync(out, img.toPNG());
+      return json(res, 200, { ok: true, files: [path.basename(out)], w: sz.width, h: sz.height });
+    }
     if (p === "/local/photo-delete" && req.method === "POST") {
       const n = q.get("name") || "", f = q.get("file") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
       if (f.includes("/") || f.includes("\\") || !IMG.has(path.extname(f).toLowerCase())) return json(res, 400, { ok: false, error: "삭제할 수 없는 파일" });
@@ -396,7 +416,7 @@ function createWindow() {
     backgroundColor: "#FFFFFF", autoHideMenuBar: true, show: false,
     icon: path.join(APP_DIR, "assets", "icon-256.png"),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: "편집", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] }]));   // 숨김 메뉴: Ctrl+C/V/A 보장
   win.webContents.setVisualZoomLevelLimits(1, 1);
   win.webContents.on("before-input-event", (e, i) => { if (i.type === "keyDown" && i.key === "F5") { win.webContents.reload(); e.preventDefault(); } if (i.type === "keyDown" && i.key === "F12" && !app.isPackaged) win.webContents.toggleDevTools(); });
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
@@ -417,7 +437,7 @@ else {
     UPD.init();
     if (process.argv.includes("--smoke")) {           // 빌드 검증용: 서버만 띄우고 포트를 임시 파일에 기록
       fs.writeFileSync(path.join(app.getPath("temp"), "reboot-smoke.json"), JSON.stringify({ port: PORT, root: ROOT, packaged: app.isPackaged }));
-      setTimeout(() => app.quit(), 25000);
+      setTimeout(() => app.quit(), 20 * 60 * 1000);
       return;
     }
     createWindow();
