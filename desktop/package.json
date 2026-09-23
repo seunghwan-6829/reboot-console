@@ -1,7 +1,7 @@
 {
   "name": "reboot-console",
   "productName": "re-boot 콘솔",
-  "version": "4.3.1",
+  "version": "4.3.2",
   "description": "re:boot 상세페이지 제작 콘솔",
   "main": "main.js",
   "private": true,
@@ -44,7 +44,8 @@
       "shortcutName": "re:boot 콘솔",
       "createDesktopShortcut": true,
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
     },
     "publish": {
       "provider": "github",
