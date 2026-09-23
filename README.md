@@ -139,11 +139,13 @@ Claude 세션에서 Higgsfield 도구가 보이는지, `balance` 로 크레딧�
 
 | 방법 | 파일 | 서버 | 언제 |
 |---|---|---|---|
-| **EXE (권장)** | `re-boot 콘솔.exe` (포터블, 설치 없음) | Electron 내장 Node | 평소. 파이썬 불필요. **설정 → 연결**에서 Claude Code·Higgsfield MCP·Codex 를 버튼으로 세팅 |
+| **설치형 EXE (권장)** | GitHub Releases 의 `reboot-console-setup-<버전>.exe` | Electron 내장 Node | 평소. 파이썬 불필요. **새 버전이 올라오면 정중앙 팝업**으로 알리고 한 번에 설치 |
+| 포터블 EXE | `re-boot 콘솔.exe` / Releases 의 `reboot-console-portable-<버전>.exe` | 동일 | USB 로 들고 다닐 때. 자동 업데이트 없음 |
 | 파이썬 런처 | `콘솔_열기.bat` → `_launch.py` | localhost:8777 | EXE 를 못 쓰는 PC. 브라우저에서 열림. 연결 버튼은 안 됨(수동 안내만) |
 
 EXE 는 처음 켤 때 **프로젝트 루트**(상품 폴더들이 있는 상위 폴더)를 정합니다. 기본은 EXE 가 놓인 폴더. 설정에서 바꿀 수 있고 `%APPDATA%\re-boot 콘솔\config.json` 에 저장됩니다.
-EXE 를 다시 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/re-boot 콘솔.exe`. 개발 실행은 `npm start`. (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
+**배포 (업데이트 올리기)** — 저장소 <https://github.com/seunghwan-6829/reboot-console> (공개, 콘솔 소스만). 절차: ① `desktop/package.json` 의 `version` 올리기 → ② `desktop/` 에서 `GH_TOKEN=$(gh auth token) npm run release` → Releases 에 setup·portable·`latest.yml` 이 올라감 → ③ 설치된 콘솔들이 켤 때/6시간마다 확인해 **정중앙 팝업** → 지금 업데이트 → 다시 시작하면 설치. 소스 동기화는 `_repo/` 에서 (`make_repo.py` 로 스테이징 후 커밋·푸시; 홈 디렉터리 git 과 별개인 중첩 저장소).
+EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/`. 개발 실행은 `npm start`. (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
 
 **브라우저 권한 팝업이 뜨지 않습니다.** 서버가 프로젝트 폴더를 대신 읽고 씁니다(`/local/*` API). v4 에서 브라우저 폴더권한(FSA) 경로는 제거했습니다.
 

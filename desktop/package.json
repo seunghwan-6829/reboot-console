@@ -1,7 +1,7 @@
 {
   "name": "reboot-console",
   "productName": "re-boot 콘솔",
-  "version": "4.1.0",
+  "version": "4.1.2",
   "description": "re:boot 상세페이지 제작 콘솔",
   "main": "main.js",
   "private": true,
@@ -12,7 +12,7 @@
     "smoke": "node sync-app.js && electron main.js --smoke",
     "dist": "node sync-app.js && electron-builder --win nsis portable",
     "dist:setup": "node sync-app.js && electron-builder --win nsis",
-    "release": "node sync-app.js && electron-builder --win nsis portable --publish always"
+    "release": "node sync-app.js && electron-builder --win nsis portable --publish always && node -e \"require('child_process').execSync('gh release edit v'+require('./package.json').version+' --draft=false --latest --repo seunghwan-6829/reboot-console',{stdio:'inherit'})\""
   },
   "devDependencies": {
     "electron": "37.10.3",
@@ -54,7 +54,7 @@
       "provider": "github",
       "owner": "seunghwan-6829",
       "repo": "reboot-console",
-      "releaseType": "release"
+      "releaseType": "draft"
     }
   },
   "dependencies": {

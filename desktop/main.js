@@ -367,6 +367,7 @@ function createWindow() {
   win.loadURL(`http://127.0.0.1:${PORT}/app/`);
 }
 
+if (process.argv.includes("--smoke")) app.setPath("userData", path.join(os.tmpdir(), "reboot-smoke-data"));   // 검증용: 실행 중인 콘솔과 잠금·설정 분리
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
