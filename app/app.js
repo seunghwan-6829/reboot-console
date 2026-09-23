@@ -229,31 +229,13 @@ const Update = {
   }
 };
 
-/* ═══ 프로젝트 (폴더) ═══ */
+/* ═══ 프로젝트 ═══ */
 const FS = {
   name: "", files: [], analysis: [], summary: null, tileMeta: {},
 
-  async connect() {
-    if (!Local.ok) { await UI.alert("서버가 없습니다", "<b>re-boot 콘솔.exe</b> 로 실행해야 합니다.", "w"); return false; }
-    let list;
-    try { list = await Local.projects(true); } catch (e) { await UI.alert("폴더 목록을 읽지 못했습니다", esc(e.message), "w"); return false; }
-    const pick = await UI.dialog({
-      title: "상품 폴더 선택", sub: "프로젝트 루트 안의 폴더입니다. 사진이 든 폴더를 고르면 바로 분석합니다.",
-      icon: "folder", tone: "b",
-      body: !list.length ? `<div class="note w">${svg("warn")}<div class="nb">프로젝트 폴더가 없습니다. <code>YYMMDD_상품명</code> 폴더를 만들고 사진을 넣은 뒤 다시 여세요.</div></div>`
-        : `<div class="plist">${list.map(p => `<button class="pitem" data-p="${esc(p.name)}">
-            <span class="pic">${svg("folder")}</span>
-            <span class="ptx"><b>${esc(p.name)}</b><small>사진 ${p.images}장${p.tiles ? ` · 타일 ${p.tiles}장` : ""}${p.hasBrief ? " · 브리프" : ""}${p.hasOrder ? " · 지시서" : ""}${p.images ? "" : " · 사진 없음"}</small></span>${svg("chevR")}</button>`).join("")}</div>`,
-      buttons: [{ label: "닫기", value: null }],
-      onOpen(d) { $$(".pitem", d).forEach(b => b.onclick = () => UI._close(b.dataset.p)); }
-    });
-    if (!pick) return false;
-    return this.load(pick, false);
-  },
-
   async load(name, quiet) {
     let p;
-    try { p = await Local.project(name); } catch (e) { if (!quiet) await UI.alert("폴더를 읽지 못했습니다", esc(e.message), "w"); return false; }
+    try { p = await Local.project(name); } catch (e) { if (!quiet) await UI.alert("프로젝트를 읽지 못했습니다", esc(e.message), "w"); return false; }
     const switching = name !== Store.get("lastProject", "");
     const files = [];
     for (const im of p.images) { try { const b = await (await fetch(im.url)).blob(); files.push(new File([b], im.name, { type: b.type || "image/png" })); } catch (e) {} }
@@ -394,7 +376,7 @@ const App = {
   },
   secSummary(id) {
     const b = this.brief[id] || {}, s = FS.summary;
-    if (id === "photos") return s ? `${s.total}장 · 평균 ${s.avgLong}px${s.low ? ` · 부족 ${s.low}장` : ""}` : "폴더 미연결";
+    if (id === "photos") return s ? `${s.total}장 · 평균 ${s.avgLong}px${s.low ? ` · 부족 ${s.low}장` : ""}` : "사진 없음";
     if (id === "product") return [b.name, b.category, (b.channels || []).join("·")].filter(Boolean).join(" · ") || "미작성";
     if (id === "target") return (b.who || "").split("\n")[0].slice(0, 46) || "미작성";
     if (id === "fact") return (b.specs || "").trim() ? (b.specs.split("\n").filter(Boolean).length + "개 항목" + (b.usp ? " · USP 있음" : "")) : "미작성";
@@ -431,7 +413,7 @@ function renderSide() {
   const s = $("#sideBody");
   const proj = FS.name || Store.get("lastProject", "") || "프로젝트 없음";
   $("#projName").textContent = proj;
-  $("#projSub").textContent = FS.files.length ? `사진 ${FS.files.length}장 · 타일 ${App.tiles.length}장` : "폴더 미연결";
+  $("#projSub").textContent = FS.name ? `사진 ${FS.files.length}장 · 타일 ${App.tiles.length}장` : "새 프로젝트를 만드세요";
   $("#projAva").textContent = (proj.match(/[가-힣A-Za-z]/) || ["·"])[0];
   let h = "";
 
@@ -608,7 +590,7 @@ const Brief = { title: "브리프", render(v) {
   const g = (sec, k, d) => (App.brief[sec] && App.brief[sec][k] != null) ? App.brief[sec][k] : (d == null ? "" : d);
   v.innerHTML = `<div class="wrap bwrap">
     <aside class="memo">
-      <div class="m">${s ? `<b>사진 ${s.total}장</b> · ${s.low ? `해상도 부족 ${s.low}장` : "해상도 양호"}<br>포인트 <i style="background:${s.accent}"></i>${s.accent}` : `<b>폴더 미연결</b><br>연결하면 사진 기준으로 예시문이 바뀝니다.<br><button class="btn sm" data-act="connect" style="margin-top:6px">폴더 연결</button>`}</div>
+      <div class="m">${s ? `<b>사진 ${s.total}장</b> · ${s.low ? `해상도 부족 ${s.low}장` : "해상도 양호"}<br>포인트 <i style="background:${s.accent}"></i>${s.accent}` : `<b>사진이 아직 없습니다</b><br>사진을 넣으면 그 기준으로 예시문이 바뀝니다.<br><button class="btn sm" data-act="addPhotos" style="margin-top:6px">사진 추가</button>`}</div>
       <div class="m"><b>Tab</b> 으로 예시문 채우기<br><span style="opacity:.75">증거·판매조건 칸은 제외</span></div>
       <div class="m">섹션 아래 <b>적용</b>을 누르면<br>접히고 다음으로 넘어갑니다.</div>
       <div class="m warn"><b>수치·인증·후기</b>는 실제 값만.<br>없으면 비워두세요.</div>
@@ -1129,7 +1111,6 @@ const ACT = {
   },
   async openRoot() { try { await Local.toolAct("open-root"); } catch (e) { UI.toast(e.message, "w"); } },
   async runClaudeTerm() { if (!FS.name) return UI.toast("먼저 프로젝트를 여세요", "w"); try { const j = await Local.toolAct("run-claude", { name: FS.name }); UI.toast(j.message, "o"); } catch (e) { UI.alert("실행 실패", esc(e.message), "d"); } },
-  async connect() { if (await FS.connect()) { UI.toast(`${FS.name} · 사진 ${FS.files.length}장 분석 완료`, "o"); go("brief"); } },
   async saveBrief(quiet) {
     if (!FS.name || !Local.ok) return;
     try { await Local.save(FS.name, "brief.json", JSON.stringify({ project: FS.name, savedAt: new Date().toISOString(), brief: App.brief, photos: photoRows(), photoSummary: FS.summary }, null, 2)); if (!quiet) UI.toast("저장했습니다", "o"); }
