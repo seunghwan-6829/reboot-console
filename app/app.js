@@ -1062,7 +1062,7 @@ const Settings = { title: "설정", render(v) {
   </div>`;
   renderConnect($("#connBox", v));
   if (Local.desktop) {
-    const showU = u => { const V = $("#updV", v), S = $("#updS", v); if (!V) return; V.textContent = "v" + (u.current || "?"); S.textContent = u.state === "portable" ? "포터블 EXE 는 자동 업데이트가 없습니다. 설치형(setup)을 쓰세요." : u.state === "available" ? `새 버전 ${u.version} 있음` : u.state === "downloaded" ? `${u.version} 내려받음 — 다시 시작하면 설치` : u.state === "latest" ? "최신 버전입니다" : u.state === "checking" ? "확인 중…" : u.state === "error" ? "확인 실패: " + (u.error || "") : u.state === "unsupported" ? "개발 실행에서는 꺼져 있습니다" : "GitHub 에 새 버전이 올라오면 정중앙 팝업으로 알려드립니다."; };
+    const showU = u => { const V = $("#updV", v), S = $("#updS", v); if (!V) return; V.textContent = "v" + (u.current || "?"); S.textContent = u.state === "available" ? `새 버전 ${u.version} 있음` : u.state === "downloaded" ? `${u.version} 내려받음 — 다시 시작하면 설치` : u.state === "latest" ? "최신 버전입니다" : u.state === "checking" ? "확인 중…" : u.state === "error" ? "확인 실패: " + (u.error || "") : u.state === "unsupported" ? "개발 실행에서는 꺼져 있습니다" : "GitHub 에 새 버전이 올라오면 정중앙 팝업으로 알려드립니다."; };
     Local.update().then(showU).catch(() => {});
     $("#updChk", v).onclick = async () => { try { await Local.updateAct("check"); } catch (e) {} UI.toast("확인 중…"); setTimeout(async () => { const u = await Update.poll(true); if (u) showU(u); }, 4000); };
   }

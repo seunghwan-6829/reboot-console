@@ -1,7 +1,7 @@
 {
   "name": "reboot-console",
   "productName": "re-boot 콘솔",
-  "version": "4.2.2",
+  "version": "4.3.0",
   "description": "re:boot 상세페이지 제작 콘솔",
   "main": "main.js",
   "private": true,
@@ -10,9 +10,8 @@
     "sync": "node sync-app.js",
     "start": "node sync-app.js && electron main.js",
     "smoke": "node sync-app.js && electron main.js --smoke",
-    "dist": "node sync-app.js && electron-builder --win nsis portable",
-    "dist:setup": "node sync-app.js && electron-builder --win nsis",
-    "release": "node sync-app.js && electron-builder --win nsis portable --publish always && node -e \"require('child_process').execSync('gh release edit v'+require('./package.json').version+' --draft=false --latest --repo seunghwan-6829/reboot-console',{stdio:'inherit'})\""
+    "dist": "node sync-app.js && electron-builder --win nsis",
+    "release": "node sync-app.js && electron-builder --win nsis --publish always && node -e \"require('child_process').execSync('gh release edit v'+require('./package.json').version+' --draft=false --latest --repo seunghwan-6829/reboot-console',{stdio:'inherit'})\""
   },
   "devDependencies": {
     "electron": "37.10.3",
@@ -33,22 +32,19 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
       "artifactName": "reboot-console-${version}.${ext}"
     },
-    "portable": {
-      "artifactName": "reboot-console-portable-${version}.${ext}"
-    },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "artifactName": "reboot-console-setup-${version}.${ext}",
       "shortcutName": "re:boot 콘솔",
       "createDesktopShortcut": true,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "publish": {
       "provider": "github",

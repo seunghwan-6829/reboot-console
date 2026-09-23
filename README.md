@@ -37,7 +37,7 @@
 ├── 콘솔_열기.bat                       ← ★ 이걸로 실행합니다
 ├── _launch.py                         ← 파이썬 로컬 서버 (localhost:8777) — EXE 없는 PC용
 ├── desktop/                           ← EXE 소스 (Electron). main.js = 내장 서버 + 도구 연결. dist/ 에 EXE
-├── re-boot 콘솔.exe                   ← 포터블 실행 파일 (desktop/dist 에서 복사)
+├── re-boot 콘솔.exe                   ← 설치 파일(원클릭). 더블클릭 = 설치 + 실행. 유일한 EXE
 │
 ├── app/                               ← re:boot 제작 콘솔 (웹앱 · Vercel 배포 가능)
 │   ├── index.html                        셸
@@ -135,9 +135,9 @@ Claude 세션에서 Higgsfield 도구가 보이는지, `balance` 로 크레딧�
 
 ### re:boot 제작 콘솔
 
-**실행은 EXE 하나.** 설치형 `re-boot 콘솔 설치.exe`(GitHub Releases 의 `reboot-console-setup-<버전>.exe`) 를 설치하면 시작 메뉴/바탕화면에 **re:boot 콘솔**이 생깁니다. 새 버전이 올라오면 정중앙 팝업으로 알리고 한 번에 설치합니다. 포터블(`reboot-console-portable-<버전>.exe`)은 USB 용이며 자동 업데이트가 없습니다.
+**EXE 는 하나.** 루트의 `re-boot 콘솔.exe` 를 더블클릭하면 조용히 설치되고 바로 열립니다(시작 메뉴·바탕화면에 **re:boot 콘솔**). 그 뒤로는 그 아이콘으로 켜고, 새 버전은 정중앙 팝업 → 한 번에 설치. 다른 PC 는 GitHub Releases 의 `reboot-console-setup-<버전>.exe` 를 받으면 됩니다. 포터블은 없앴습니다.
 
-첫 실행 때 **프로젝트 루트**(상품 폴더들을 둘 상위 폴더)를 묻습니다. 그 뒤로는 앱 안에서 **새 프로젝트**(이름만) → **사진 드롭/붙여넣기** → 브리프 → 제작 → 검수 → 전달까지 전부 돌아갑니다. 파이썬·bat·브라우저는 더 이상 쓰지 않습니다(옛 웹 버전은 `_old/웹버전(파이썬·Vercel)/` 에 보관).
+첫 실행 때 **프로젝트 루트**(상품 폴더들을 둘 상위 폴더)를 묻습니다. 그 뒤로는 앱 안에서 **새 프로젝트**(이름만) → **사진 드롭/붙여넣기** → 브리프 → 제작 → 검수 → 전달까지 전부 돌아갑니다. 파이썬·bat·브라우저·포터블은 더 이상 없습니다.
 
 **배포 (업데이트 올리기)** — 저장소 <https://github.com/seunghwan-6829/reboot-console> (공개, 콘솔 소스만). 절차: ① `desktop/package.json` 의 `version` 올리기 → ② `desktop/` 에서 `GH_TOKEN=$(gh auth token) npm run release` → Releases 에 setup·portable·`latest.yml` 이 올라감 → ③ 설치된 콘솔들이 켤 때/6시간마다 확인해 **정중앙 팝업** → 지금 업데이트 → 다시 시작하면 설치. 소스 동기화는 `_repo/` 에서 (`make_repo.py` 로 스테이징 후 커밋·푸시; 홈 디렉터리 git 과 별개인 중첩 저장소).
 EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/`. 개발 실행은 `npm start`. 화면 소스는 `app/`(EXE 에 통째로 들어감). (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
@@ -411,4 +411,4 @@ v1.2에서 **배송을 16:9 배너로 만들어 최상단(01)** 에, **Q&A·추�
 
 ## 12. (삭제) Vercel 클라우드
 
-EXE 전용으로 가면서 클라우드 메뉴와 `app/api` 를 뺐습니다. 코드는 `_old/웹버전(파이썬·Vercel)/app/` 에 있습니다. 다시 필요하면 그 폴더의 api 를 `app/` 로 되돌리고 앱에 Cloud 뷰를 복원하면 됩니다.
+EXE 전용으로 가면서 클라우드 메뉴와 `app/api`, 파이썬 런처를 삭제했습니다. 다시 필요하면 git 이력 이전 세션 문서(파이프라인 md 의 v2~v4 절)를 참고해 새로 만드는 편이 빠릅니다.
