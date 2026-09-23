@@ -1,0 +1,50 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__ 상세페이지 시안</title>
+<style>
+:root{--ink:#37352F;--ink2:#787774;--line:#E9E9E7;--bg:#F1F1EF;--panel:#fff;--brand:#F86010}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.top b{font-size:15px}.top small{color:var(--ink2)}.sp{flex:1}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:6px 12px;font:inherit;font-size:13px;color:var(--ink2);cursor:pointer}
+.seg button.on{background:var(--ink);color:#fff}
+.rng{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}input[type=range]{width:110px;accent-color:var(--brand)}
+.tog{font-size:12.5px;color:var(--ink2);display:flex;align-items:center;gap:5px;cursor:pointer}
+.stage{display:flex;justify-content:center;padding:24px 12px 80px}
+.page{background:#fff;box-shadow:0 6px 30px rgba(0,0,0,.14);border-radius:4px;overflow:hidden;width:860px;max-width:100%}
+.tl{position:relative}.tl img{display:block;width:100%;height:auto}
+.tl .lb{position:absolute;top:8px;left:8px;background:rgba(20,23,26,.78);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px}
+.hide .lb{display:none}
+.fb{border-top:1px dashed var(--line);background:#FAFAF8;padding:8px 12px;display:none;gap:8px;align-items:flex-start}
+.fbon .fb{display:flex}
+.fb textarea{flex:1;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:6px 9px;font:inherit;font-size:13px;resize:vertical}
+.fb small{color:var(--ink2);white-space:nowrap;padding-top:8px}
+.foot{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:9px 16px;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.btn.pri{background:var(--brand);border-color:var(--brand);color:#fff}
+.toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:#1F1F1E;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;transition:.25s;pointer-events:none}
+.toast.on{opacity:1}
+</style></head><body>
+<div class="top"><b>__TITLE__</b><small>상세페이지 시안 · __VER__ · __DATE__ · __COUNT__장</small><div class="sp"></div>
+<div class="seg"><button data-w="390">모바일</button><button data-w="768">태블릿</button><button data-w="860" class="on">기본</button></div>
+<div class="rng">배율 <input type="range" id="z" min="35" max="100" value="100"><span id="zv">100%</span></div>
+<label class="tog"><input type="checkbox" id="lb" checked> 번호</label>
+<label class="tog"><input type="checkbox" id="fbt"> 피드백</label></div>
+<div class="stage"><div class="page" id="page"></div></div>
+<div class="foot"><span style="font-size:12px;color:var(--ink2)">피드백을 켜고 각 장 아래에 적은 뒤</span><button class="btn pri" id="cp">피드백 전체 복사</button><span style="font-size:12px;color:var(--ink2)">→ 담당자에게 보내주세요</span></div>
+<div class="toast" id="t"></div>
+<script>
+var FIGS=__FIGS__, KEY="fb:__TITLE__:__VER__", W=860;
+var page=document.getElementById("page");
+page.innerHTML=FIGS.map(function(f){return '<div class="tl"><span class="lb">'+f.n+(f.name?" · "+f.name:"")+'</span><img src="data:image/jpeg;base64,'+f.b64+'" alt="'+f.n+'"><div class="fb"><small>'+f.n+'</small><textarea data-n="'+f.n+'" placeholder="이 장에 대한 의견"></textarea></div></div>'}).join("");
+var saved={};try{saved=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+document.querySelectorAll("textarea[data-n]").forEach(function(t){t.value=saved[t.dataset.n]||"";t.addEventListener("input",function(){saved[t.dataset.n]=t.value;try{localStorage.setItem(KEY,JSON.stringify(saved))}catch(e){}})});
+function apply(){page.style.width=Math.round(W*document.getElementById("z").value/100)+"px";document.getElementById("zv").textContent=document.getElementById("z").value+"%"}
+document.getElementById("z").oninput=apply;
+document.querySelectorAll(".seg button").forEach(function(b){b.onclick=function(){W=+b.dataset.w;document.querySelectorAll(".seg button").forEach(function(x){x.classList.toggle("on",x===b)});apply()}});
+document.getElementById("lb").onchange=function(){document.body.classList.toggle("hide",!this.checked)};
+document.getElementById("fbt").onchange=function(){document.body.classList.toggle("fbon",this.checked)};
+function toast(m){var t=document.getElementById("t");t.textContent=m;t.classList.add("on");setTimeout(function(){t.classList.remove("on")},2200)}
+document.getElementById("cp").onclick=function(){var L=["[__TITLE__ __VER__] 피드백 — "+new Date().toLocaleString("ko-KR"),""];FIGS.forEach(function(f){var v=(saved[f.n]||"").trim();if(v)L.push("▸ "+f.n+(f.name?" "+f.name:""),"   "+v.replace(/\n/g,"\n   "),"")});if(L.length<3)return toast("아직 적은 피드백이 없습니다");navigator.clipboard.writeText(L.join("\n")).then(function(){toast("복사했습니다")},function(){toast("복사 실패 — 직접 선택해 복사해 주세요")})};
+apply();
+</script></body></html>

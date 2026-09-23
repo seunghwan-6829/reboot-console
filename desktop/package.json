@@ -1,0 +1,67 @@
+{
+  "name": "reboot-console",
+  "productName": "re-boot 콘솔",
+  "version": "4.1.0",
+  "description": "re:boot 상세페이지 제작 콘솔",
+  "main": "main.js",
+  "private": true,
+  "author": "re:boot design",
+  "scripts": {
+    "sync": "node sync-app.js",
+    "start": "node sync-app.js && electron main.js",
+    "smoke": "node sync-app.js && electron main.js --smoke",
+    "dist": "node sync-app.js && electron-builder --win nsis portable",
+    "dist:setup": "node sync-app.js && electron-builder --win nsis",
+    "release": "node sync-app.js && electron-builder --win nsis portable --publish always"
+  },
+  "devDependencies": {
+    "electron": "37.10.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "kr.rebootdesign.console",
+    "productName": "re-boot 콘솔",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "app/**/*",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "reboot-console-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "reboot-console-portable-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "reboot-console-setup-${version}.${ext}",
+      "shortcutName": "re:boot 콘솔",
+      "createDesktopShortcut": true,
+      "runAfterFinish": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "seunghwan-6829",
+      "repo": "reboot-console",
+      "releaseType": "release"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seunghwan-6829/reboot-console.git"
+  }
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>re:boot — 상세페이지 제작 콘솔</title>
+<meta name="description" content="상품 사진을 분석하고 브리프를 받아 상세페이지 타일을 만드는 제작 콘솔">
+<meta name="theme-color" content="#F86010">
+
+<link rel="icon" href="assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="shell" id="shell">
+
+  <!-- 아이콘 레일 -->
+  <nav class="rail" id="rail" aria-label="주 메뉴"></nav>
+
+  <!-- 사이드바 -->
+  <aside class="side" id="side">
+    <div class="side-top">
+      <button class="proj" id="projBtn" title="프로젝트 목록">
+        <span class="ava" id="projAva">·</span>
+        <span class="tx"><b id="projName">프로젝트 없음</b><small id="projSub">폴더 미연결</small></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+    <div class="side-body" id="sideBody"></div>
+    <div class="side-foot">
+      <img src="assets/logo-wordmark.png" alt="re:boot" style="height:15px;opacity:.55">
+      <div style="flex:1"></div>
+      <span style="font-size:11px;color:var(--ink-3)">제작 콘솔</span>
+    </div>
+  </aside>
+
+  <!-- 메인 -->
+  <main class="main">
+    <div class="topbar">
+      <button class="btn ghost sm" id="sideToggle" title="사이드바 접기/펴기" aria-label="사이드바 접기/펴기">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M9 5v14"/></svg>
+      </button>
+      <div class="crumb" id="crumb"></div>
+      <div class="sp"></div>
+    </div>
+    <div class="view" id="view"></div>
+    <div class="actbar" id="actbar" hidden></div>
+  </main>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
