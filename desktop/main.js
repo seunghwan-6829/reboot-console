@@ -22,7 +22,7 @@ process.on("unhandledRejection", e => logErr(e));
 
 const APP_DIR = path.join(__dirname, "app");
 const IMG = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".avif", ".heic", ".heif"]);
-const SAVE_OK = new Set(["brief.json", "order.json", "review.json", "tiles/manifest.json"]);
+const SAVE_OK = new Set(["brief.json", "order.json", "review.json", "suggest.json", "tiles/manifest.json"]);
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon", ".svg": "image/svg+xml",
   ".webmanifest": "application/manifest+json", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/markdown; charset=utf-8" };
@@ -81,7 +81,7 @@ function scan(name) {
   const d = path.join(ROOT, name), base = "/" + encodeURIComponent(name) + "/";
   return { name, images: listImages(d, base), tiles: listImages(path.join(d, "tiles"), base + "tiles/"),
     tileMeta: readJson(path.join(d, "tiles", "manifest.json")) || {}, brief: readJson(path.join(d, "brief.json")), order: readJson(path.join(d, "order.json")),
-    review: readJson(path.join(d, "review.json")),
+    review: readJson(path.join(d, "review.json")), suggest: readJson(path.join(d, "suggest.json")),
     hasBrief: fs.existsSync(path.join(d, "brief.json")), hasOrder: fs.existsSync(path.join(d, "order.json")), mtime: fs.statSync(d).mtimeMs / 1000 };
 }
 function projectList() {
@@ -298,6 +298,48 @@ const UPD = {
   }
 };
 
+/* ── 사진 보고 브리프 예시문 제안 (Claude Code 헤드리스, Read 만 허용) ── */
+const SUG = {
+  proc: null, name: "", running: false, error: "", data: null, startedAt: 0,
+  get() { return { ok: true, running: this.running, name: this.name, error: this.error, data: this.data, startedAt: this.startedAt }; },
+  start(name, hint) {
+    if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
+    if (this.running) return { ok: false, error: "이미 사진을 보는 중입니다" };
+    const d = path.join(ROOT, name);
+    const photos = listImages(d, "").map(i => path.join(d, i.name)).slice(0, 6);
+    if (!photos.length) return { ok: false, error: "사진이 없습니다" };
+    const h = hint || {};
+    const prompt = `너는 한국 커머스 상세페이지 기획자다. 아래 사진 파일을 Read 도구로 하나씩 열어 보고(전부), 무엇이 찍혔는지 파악한 뒤 브리프 예시문을 제안하라.
+사진 파일:
+${photos.map(p => "- " + p).join("\n")}
+상품명(사용자 입력): ${h.name || "(없음)"} / 카테고리: ${h.category || "(없음)"} / 판매가: ${h.price || "(없음)"}
+
+반드시 아래 형식의 JSON 객체 하나만 출력한다. 설명·마크다운·코드펜스 금지.
+{"photo":"사진에 보이는 것 1~2문장 — 제품 형태·포장·라벨에 적힌 글자·색·배경","name":"상품명 제안 (사용자 입력이 있으면 그대로)","who":"누가 어떤 상황에서 사는지 2문장, 구체적인 사람으로","specs":"스펙·구성·성분 3~5줄을 줄바꿈으로. 사진·라벨에서 읽은 것만 사실로 쓰고 추정은 끝에 (확인 필요)","usp":"경쟁 제품 대비 차별점 한 줄. 추정이면 끝에 (추정)","mood":"어울리는 비주얼 분위기 한 줄","avoid":"피해야 할 톤 한 줄","sections":["추가하면 좋은 섹션 id 0~3개: brand,howto,awards,reviews 중"]}
+규칙: 라벨·사진에 없는 수치·인증·후기·원산지·수상은 절대 지어내지 않는다. 한국어. 각 값은 짧고 바로 쓸 수 있게.`;
+    this.name = name; this.running = true; this.error = ""; this.data = null; this.startedAt = Date.now();
+    let out = "", err = "";
+    let pr;
+    try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "10", "--allowedTools", "Read"], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
+    catch (e) { this.running = false; this.error = e.message; return { ok: false, error: e.message }; }
+    this.proc = pr;
+    try { pr.stdin.write(prompt, "utf8"); pr.stdin.end(); } catch (e) {}
+    pr.stdout.on("data", c => { out += c.toString("utf8"); });
+    pr.stderr.on("data", c => { err += c.toString("utf8"); });
+    pr.on("error", e => { this.running = false; this.error = "실행 오류: " + e.message; });
+    pr.on("close", code => {
+      this.running = false;
+      try {
+        const j = JSON.parse(out); const txt = String(j.result || "");
+        const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error("응답에 JSON 이 없습니다");
+        const data = JSON.parse(m[0]); data.at = new Date().toISOString(); data.photos = photos.map(p => path.basename(p)); data.cost = j.total_cost_usd || null;
+        this.data = data; fs.writeFileSync(path.join(d, "suggest.json"), JSON.stringify(data, null, 2), "utf8");
+      } catch (e) { this.error = "제안을 읽지 못했습니다: " + e.message + (err ? " / " + err.slice(0, 200) : "") + (code ? " (code " + code + ")" : ""); logErr(e); }
+    });
+    return { ok: true, message: "AI 가 사진을 보는 중" };
+  }
+};
+
 /* ── HTTP 서버 ───────────────────────────────────────── */
 function json(res, code, obj) { const b = Buffer.from(JSON.stringify(obj), "utf8"); res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Content-Length": b.length, "Cache-Control": "no-store" }); res.end(b); }
 function serveFile(res, base, rel) {
@@ -318,6 +360,10 @@ async function handle(req, res) {
     if (p === "/local/project") { const n = q.get("name") || ""; if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" }); return json(res, 200, Object.assign({ ok: true }, scan(n))); }
     if (p === "/local/export") { const n = q.get("name") || "", ver = (q.get("ver") || "v1").slice(0, 12); if (!isProjectDir(n)) return json(res, 404, { ok: false, error: "없는 폴더입니다" });
       try { return json(res, 200, Object.assign({ ok: true }, buildExport(n, ver))); } catch (e) { return json(res, 500, { ok: false, error: "내보내기 실패: " + e.message }); } }
+    if (p === "/local/suggest") {
+      if (req.method === "POST") { const body = (await readBody(req, 100000)).toString("utf8"); let b = {}; try { b = body ? JSON.parse(body) : {}; } catch (e) {} return json(res, 200, SUG.start(b.name || q.get("name") || "", b.hint || {})); }
+      return json(res, 200, SUG.get());
+    }
     if (p === "/local/update") { if (req.method === "POST") return json(res, 200, await UPD.act(q.get("do") || "check")); return json(res, 200, UPD.get()); }
     if (p === "/local/tools") { if (req.method === "POST") return json(res, 200, await toolAction(q)); return json(res, 200, await toolStatus()); }
     if (p === "/local/run") {

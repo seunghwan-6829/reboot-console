@@ -192,6 +192,8 @@ const Local = {
   addPhoto(name, file, blob) { return this._j(`/local/photo?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob }); },
   deletePhoto(name, file) { return this._j(`/local/photo-delete?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST" }); },
   pasteClip(name) { return this._j(`/local/paste?name=${encodeURIComponent(name)}`, { method: "POST" }); },
+  suggest(name, hint) { return this._j("/local/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, hint }) }); },
+  suggestStatus() { return this._j("/local/suggest"); },
   /* EXE 전용 */
   tools() { return this._j("/local/tools"); },
   toolAct(action, extra) { return this._j("/local/tools?" + new URLSearchParams(Object.assign({ do: action }, extra || {})), { method: "POST" }); },
@@ -243,6 +245,7 @@ const FS = {
     // 검수: review.json(신) → order.json 의 review(구) → 로컬
     const rv = (p.review && p.review.tiles) || (p.order && p.order.review) || null;
     if (rv && typeof rv === "object") App.review = App.migrateReview(rv); else if (switching) App.review = {};
+    App.suggest = (p.suggest && typeof p.suggest === "object") ? p.suggest : null;
     App.saveBrief(); App.saveReview();
     this.files = files; this.analysis = [];
     for (const f of files) this.analysis.push(await Analyze.file(f));
@@ -260,7 +263,7 @@ const FS = {
       let name = f.name && isImg(f.name) ? f.name : `붙여넣기_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.${(f.type || "image/png").split("/")[1].replace("jpeg", "jpg")}`;
       try { await Local.addPhoto(this.name, name, f); n++; } catch (e) { UI.toast(`${name}: ${e.message}`, "w"); }
     }
-    if (n) { await this.load(this.name, true); UI.toast(`사진 ${n}장 추가 · 분석 완료`, "o"); Local._projects = null; }
+    if (n) { await this.load(this.name, true); UI.toast(`사진 ${n}장 추가 · 분석 완료`, "o"); Local._projects = null; Suggest.auto(); }
     return n;
   },
   async removePhoto(file) {
@@ -356,7 +359,12 @@ const App = {
     return out;
   },
   hasReq(n) { const r = this.review[n]; return !!(r && ((r.regions && r.regions.length) || (r.note || "").trim())); },
-  eg() { return EG[this.brief?.product?.category] || EG._; },
+  suggest: null,
+  eg() {
+    const base = EG[this.brief?.product?.category] || EG._, g = this.suggest;
+    if (!g) return base;
+    return Object.assign({}, base, { name: g.name || base.name, who: g.who || base.who, specs: g.specs || base.specs, usp: g.usp || base.usp, mood: g.mood || "", avoid: g.avoid || "" , ai: true });
+  },
   secDone(id) {
     const b = this.brief[id] || {};
     if (id === "photos") return FS.analysis.length > 0;
@@ -582,7 +590,7 @@ const Brief = { title: "브리프", render(v) {
   const g = (sec, k, d) => (App.brief[sec] && App.brief[sec][k] != null) ? App.brief[sec][k] : (d == null ? "" : d);
   v.innerHTML = `<div class="wrap bwrap">
     <aside class="memo">
-      <div class="m">${s ? `<b>사진 ${s.total}장</b> · ${s.low ? `해상도 부족 ${s.low}장` : "해상도 양호"}<br>포인트 <i style="background:${s.accent}"></i>${s.accent}` : `<b>사진이 아직 없습니다</b><br>사진을 넣으면 그 기준으로 예시문이 바뀝니다.<br><button class="btn sm" data-act="addPhotos" style="margin-top:6px">사진 추가</button>`}</div>
+      <div class="m">${s ? `<b>사진 ${s.total}장</b> · ${s.low ? `해상도 부족 ${s.low}장` : "해상도 양호"}<br>포인트 <i style="background:${s.accent}"></i>${s.accent}${App.suggest && App.suggest.photo ? `<br><span style="opacity:.8">AI: ${esc(App.suggest.photo).slice(0, 70)}</span>` : ""}` : `<b>사진이 아직 없습니다</b><br>사진을 넣으면 그 기준으로 예시문이 바뀝니다.<br><button class="btn sm" data-act="addPhotos" style="margin-top:6px">사진 추가</button>`}</div>
       <div class="m"><b>Tab</b> 으로 예시문 채우기<br><span style="opacity:.75">증거·판매조건 칸은 제외</span></div>
       <div class="m">섹션 아래 <b>적용</b>을 누르면<br>접히고 다음으로 넘어갑니다.</div>
       <div class="m warn"><b>수치·인증·후기</b>는 실제 값만.<br>없으면 비워두세요.</div>
@@ -603,6 +611,7 @@ const Brief = { title: "브리프", render(v) {
     const ap = e.target.closest("[data-apply]"); if (ap) { applySection(ap.dataset.apply); return; }
     const pv = e.target.closest("[data-prev]"); if (pv) { const i = SECTIONS.findIndex(x => x.id === pv.dataset.prev); if (i > 0) openCard(SECTIONS[i - 1].id); return; }
     const h = e.target.closest(".chead"); if (h) { toggleCard(h.parentElement); return; }
+    const sg = e.target.closest("[data-sug]"); if (sg) { Suggest.act(sg.dataset.sug); return; }
     const dp = e.target.closest("[data-del-photo]"); if (dp) { FS.removePhoto(dp.dataset.delPhoto).then(ok => { if (ok) { go("brief"); setTimeout(() => openCard("photos", true), 60); } }); return; }
     const th = e.target.closest(".th[data-src]"); if (th) { UI.lightbox(th.dataset.src); return; }
     const a = e.target.closest("[data-act]"); if (a) { ACT[a.dataset.act](); return; }
@@ -614,7 +623,7 @@ const Brief = { title: "브리프", render(v) {
     if (e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey) return;
     const t = e.target; if (!t.matches || !t.matches("input[type=text][data-k], textarea[data-k]")) return;
     if (!SET.tabFill || t.hasAttribute("data-notab") || t.value.trim() || !t.placeholder) return;
-    if (App.eg() === EG._) { e.preventDefault(); UI.toast("카테고리를 먼저 고르면 그 업종의 예시문이 채워집니다", "w"); return; }   // 안내문은 채우지 않는다
+    if (App.eg() === EG._ && !App.suggest) { e.preventDefault(); UI.toast("카테고리를 먼저 고르면 그 업종의 예시문이 채워집니다", "w"); return; }   // 안내문은 채우지 않는다
     e.preventDefault(); t.value = t.placeholder; t.dispatchEvent(new Event("input", { bubbles: true }));
     UI.toast("예시문을 채웠습니다 — 내 상품 내용으로 고쳐주세요");
   });
@@ -634,7 +643,7 @@ async function pasteFromClipboard() {
   try {
     const j = await Local.pasteClip(FS.name);
     await FS.load(FS.name, true); Local._projects = null;
-    UI.toast(`붙여넣기 ${j.files.length}장 추가${j.w ? ` (${j.w}×${j.h})` : ""} · 분석 완료`, "o");
+    UI.toast(`붙여넣기 ${j.files.length}장 추가${j.w ? ` (${j.w}×${j.h})` : ""} · 분석 완료`, "o"); Suggest.auto();
     if (App.view !== "brief") go("brief"); else go("brief"); setTimeout(() => openCard("photos", true), 60);
   } catch (e) { UI.toast(/이미지가 없습니다/.test(e.message) ? "클립보드에 이미지가 없습니다 — 캡처하거나 파일을 복사한 뒤 Ctrl+V" : "붙여넣기 실패: " + e.message, "w"); }
   finally { pasteBusy = false; }
@@ -683,7 +692,7 @@ const BODY = {
         <dt>방향 구성</dt><dd>${Object.entries(s.orients).map(([k, n]) => `${k} ${n}장`).join(" · ")}</dd>
         <dt>누끼 적합</dt><dd>${s.cuttable}장</dd>
         <dt>추출 포인트 컬러</dt><dd><i class="sw" style="background:${s.accent}"></i>${s.accent}</dd></dl>
-      <p class="hint" style="margin:10px 0 12px">여기서 하는 건 <b>기술 분석</b>입니다. 사진에 무엇이 찍혔는지는 AI가 제작할 때 직접 보고 판단합니다.</p>
+      <div class="aisug" id="aisug">${Suggest.box()}</div>
       <div class="shots">${FS.analysis.map(shotCard).join("")}</div>`),
   product: (g, eg) => `<p class="hint">이것만 있어도 기획안 초안은 나옵니다.</p>
     <div class="row2"><div class="fld"><label>상품명</label><input type="text" data-k="product.name" value="${esc(g("product", "name"))}" placeholder="${esc(eg.name)}"></div>
@@ -705,8 +714,8 @@ const BODY = {
   req: (g, eg, s) => `<p class="hint">${s ? `사진에서 뽑은 포인트 컬러는 <b>${s.accent}</b> 입니다. 비워두면 이 색으로 제안합니다.` : "비워두면 사진 분석 결과로 톤을 제안드립니다."}</p>
     <div class="fld"><label>제품 사진 처리</label><p class="hint">권장은 <b>원본 그대로 합성</b> — 누끼·업스케일만 하고 AI가 제품을 다시 그리지 않습니다. 라벨·형태가 바뀌지 않습니다.</p>
       <div class="chips" data-radio="req.photoMode">${PHOTO_MODES.map(([k, l]) => `<label class="chip"><input type="radio" name="pm" value="${k}"${(g("req", "photoMode") || "keep") === k ? " checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
-    <div class="row2"><div class="fld"><label>원하는 분위기</label><textarea data-k="req.mood" placeholder="깨끗하고 자연광 느낌. 프리미엄하게.">${esc(g("req", "mood"))}</textarea></div>
-      <div class="fld"><label>피하고 싶은 것</label><textarea data-k="req.avoid" placeholder="빨간 폭탄세일 느낌, 촌스러운 그라데이션">${esc(g("req", "avoid"))}</textarea></div></div>
+    <div class="row2"><div class="fld"><label>원하는 분위기</label><textarea data-k="req.mood" placeholder="${esc(eg.mood || "깨끗하고 자연광 느낌. 프리미엄하게.")}">${esc(g("req", "mood"))}</textarea></div>
+      <div class="fld"><label>피하고 싶은 것</label><textarea data-k="req.avoid" placeholder="${esc(eg.avoid || "빨간 폭탄세일 느낌, 촌스러운 그라데이션")}">${esc(g("req", "avoid"))}</textarea></div></div>
     <div class="fld"><label>그 밖에 하고 싶은 말</label><textarea data-k="req.etc" placeholder="법적으로 못 쓰는 표현, 꼭 넣어야 할 고지, 참고 브랜드 등">${esc(g("req", "etc"))}</textarea></div>`,
   layout: () => {
     const sel = layoutSel(), groups = [];
@@ -728,9 +737,9 @@ function onFieldInput(e) {
   App.saveBrief(); refreshCardMeta(); bumpProgress();
 }
 function rerenderExamples() {
-  const eg = App.eg(), map = { "product.name": eg.name, "product.price": eg.price, "target.who": eg.who, "fact.specs": eg.specs, "fact.usp": eg.usp };
+  const eg = App.eg(), map = { "product.name": eg.name, "product.price": eg.price, "target.who": eg.who, "fact.specs": eg.specs, "fact.usp": eg.usp, "req.mood": eg.mood || "깨끗하고 자연광 느낌. 프리미엄하게.", "req.avoid": eg.avoid || "빨간 폭탄세일 느낌, 촌스러운 그라데이션" };
   Object.entries(map).forEach(([k, v]) => { const f = $(`[data-k="${k}"]`); if (f) f.placeholder = v; });
-  UI.toast("카테고리에 맞춰 예시문을 바꿨습니다");
+  if (!eg.ai) UI.toast("카테고리에 맞춰 예시문을 바꿨습니다");
 }
 function refreshCardMeta() {
   $$(".card[data-sec]").forEach(c => { const id = c.dataset.sec, done = App.secDone(id), was = c.classList.contains("done");
@@ -963,6 +972,46 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && Review.drawing) Review.setDraw(false);
   if ((e.key === "Delete" || e.key === "Backspace") && Review.hi >= 0) { Review.rec().regions.splice(Review.hi, 1); Review.hi = -1; Review.cap(); Review.paint(); Review.list(); }
 });
+
+/* ── AI 가 사진 보고 예시문 제안 ── */
+const Suggest = {
+  timer: null, running: false, err: "",
+  box() {
+    const g = App.suggest;
+    if (!Local.desktop) return `<p class="hint" style="margin:10px 0 12px">EXE 에서는 AI 가 사진을 직접 보고 예시문을 씁니다.</p>`;
+    if (this.running) return `<div class="note i">${svg("sparkles")}<div class="nb"><b>AI 가 사진을 보는 중…</b> 20~40초. 보고 나면 아래 칸들의 예시문이 이 상품에 맞게 바뀝니다.</div></div>`;
+    if (this.err) return `<div class="note w">${svg("warn")}<div class="nb">${esc(this.err)} <button class="btn sm" data-sug="run" style="margin-left:6px">다시</button></div></div>`;
+    if (g) return `<div class="note o">${svg("check")}<div class="nb"><b>AI 가 본 사진:</b> ${esc(g.photo || "")}<br><span class="hint">예시문(Tab)이 이 상품 기준으로 바뀌었습니다${g.cost ? ` · $${(+g.cost).toFixed(2)}` : ""}</span>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm pri" data-sug="fill">${svg("edit")} 빈 칸에 제안 채우기</button><button class="btn sm ghost" data-sug="run">${svg("refresh")} 다시 보기</button></div></div></div>`;
+    return `<div class="note b">${svg("sparkles")}<div class="nb"><b>사진을 AI 에게 보여주고 예시문 받기</b> — 누가 사나·스펙·차별점·분위기를 이 상품 기준으로 제안합니다.<div style="margin-top:8px"><button class="btn sm pri" data-sug="run">${svg("sparkles")} 사진 보고 예시문 쓰기</button></div></div></div>`;
+  },
+  paint() { const b = $("#aisug"); if (b) b.innerHTML = this.box(); },
+  async auto() { if (!Local.desktop || this.running || !FS.name) return; const rd = await aiReady(); if (!rd.ok && !rd.running) return; this.run(); },
+  async run() {
+    if (!Local.desktop || !FS.name) return; if (this.running) return UI.toast("이미 보는 중입니다");
+    const pr = App.brief.product || {};
+    try { await Local.suggest(FS.name, { name: pr.name, category: pr.category, price: pr.price }); } catch (e) { this.err = e.message; this.paint(); return UI.toast(e.message, "w"); }
+    this.running = true; this.err = ""; this.paint(); UI.toast("AI 가 사진을 보는 중…");
+    clearInterval(this.timer);
+    this.timer = setInterval(async () => {
+      let st; try { st = await Local.suggestStatus(); } catch (e) { return; }
+      if (st.running) return;
+      clearInterval(this.timer); this.running = false;
+      if (st.error) { this.err = st.error; this.paint(); UI.toast("예시문 제안 실패", "w"); return; }
+      if (st.data && st.name === FS.name) { App.suggest = st.data; this.paint(); rerenderExamples(); refreshCardMeta(); UI.toast("사진 기준 예시문을 적용했습니다 — Tab 으로 채우거나 '빈 칸에 제안 채우기'", "o"); }
+    }, 2500);
+  },
+  fill() {
+    const g = App.suggest; if (!g) return;
+    const put = (sec, k, v) => { if (!v) return 0; App.brief[sec] = App.brief[sec] || {}; if (String(App.brief[sec][k] || "").trim()) return 0; App.brief[sec][k] = v; const f = $(`[data-k="${sec}.${k}"]`); if (f) f.value = v; return 1; };
+    let n = put("product", "name", g.name) + put("target", "who", g.who) + put("fact", "specs", g.specs) + put("fact", "usp", g.usp) + put("req", "mood", g.mood) + put("req", "avoid", g.avoid);
+    if (Array.isArray(g.sections) && g.sections.length) { const cur = new Set(layoutSel()); g.sections.forEach(id => { if (catOf(id)) cur.add(id); }); App.brief.layout = { sections: CATALOG.filter(c => cur.has(c.id)).map(c => c.id) }; }
+    App.saveBrief(); refreshCardMeta(); bumpProgress(); ACT.saveBrief(true);
+    UI.toast(n ? `빈 칸 ${n}개를 제안으로 채웠습니다 — 사실과 다르면 고쳐주세요` : "빈 칸이 없습니다", n ? "o" : "w");
+    if (n) { go("brief"); setTimeout(() => openCard("target", true), 60); }
+  },
+  act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); }
+};
 
 /* ── AI 실행 패널 (EXE: Claude Code 헤드리스) ── */
 const RunUI = {
@@ -1244,7 +1293,7 @@ async function boot() {
   go(!fresh && restored ? Store.get("view", "home") : "home");
   if (restored) UI.toast(`${FS.name} — 이어서 작업합니다`, "o");
   else if (!Local.ok) UI.toast("EXE 로 실행해 주세요 — 지금은 화면만 보입니다", "w");
-  if (Local.desktop) { try { const st = await Local.runStatus(0); if (st.running) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`); } catch (e) {} Update.start(); }
+  if (Local.desktop) { try { const st = await Local.runStatus(0); if (st.running) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
 }
 document.addEventListener("DOMContentLoaded", boot);
 window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update };

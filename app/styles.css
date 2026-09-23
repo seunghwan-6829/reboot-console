@@ -510,3 +510,6 @@ code{background:var(--sunk);border-radius:4px;padding:1px 5px;font-size:12.5px;f
 .shx svg{width:12px;height:12px;stroke-width:2.4}
 .shot:hover .shx{opacity:1}
 .shx:hover{background:var(--danger)}
+
+.aisug{margin:10px 0 12px}
+.aisug .note{margin-bottom:0}
