@@ -245,7 +245,7 @@ const RUN = {
     p.stdout.on("data", d => { buf += d.toString("utf8"); let i; while ((i = buf.indexOf("\n")) >= 0) { const ln = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (ln) this.ingest(ln); } });
     p.stderr.on("data", d => { const s = d.toString("utf8").trim(); if (s) this.push("err", s); });
     p.on("error", e => { this.push("err", "실행 오류: " + e.message); this.exit = -1; this.done = true; });
-    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); });
+    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); if (UPD.state === "downloaded-wait") { UPD.state = "downloaded"; setTimeout(() => UPD.tryInstall(), 15000); } });
     return { ok: true, message: "시작했습니다" };
   },
   ingest(ln) {
@@ -271,22 +271,29 @@ const UPD = {
   get() { return { ok: true, state: this.state, version: this.version, notes: this.notes, progress: this.progress, error: this.error, current: this.current, checkedAt: this.checkedAt, portable: !!process.env.PORTABLE_EXECUTABLE_DIR, packaged: app.isPackaged }; },
   init() {
     if (!autoUpdater || !app.isPackaged) { this.state = "unsupported"; return; }
-    autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; autoUpdater.allowPrerelease = false;
+    autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true; autoUpdater.allowPrerelease = false;   // 조용히: 알아서 받고, 틈 나면 알아서 재시작
     autoUpdater.logger = null;
     autoUpdater.on("checking-for-update", () => { this.state = "checking"; this.error = ""; });
     autoUpdater.on("update-available", i => { this.state = "available"; this.version = i.version; this.notes = typeof i.releaseNotes === "string" ? i.releaseNotes : ""; this.checkedAt = Date.now(); });
     autoUpdater.on("update-not-available", () => { this.state = "latest"; this.checkedAt = Date.now(); });
     autoUpdater.on("download-progress", p => { this.state = "downloading"; this.progress = Math.round(p.percent || 0); });
-    autoUpdater.on("update-downloaded", i => { this.state = "downloaded"; this.version = i.version; this.progress = 100; });
+    autoUpdater.on("update-downloaded", i => { this.state = "downloaded"; this.version = i.version; this.progress = 100; this.tryInstall(); });
     autoUpdater.on("error", e => { this.state = "error"; this.error = String(e && e.message || e).slice(0, 300); logErr(e); });
     this.check(); setInterval(() => this.check(), 6 * 3600 * 1000);
+  },
+  /* AI 작업 중이 아니면 5초 뒤 무음 설치 + 재실행. 작업 중이면 끝날 때(RUN close) 다시 시도, 그래도 아니면 종료 시 설치 */
+  tryInstall() {
+    if (this.state !== "downloaded" || this.installing) return;
+    if (RUN.proc && RUN.exit == null) { this.state = "downloaded-wait"; return; }
+    this.installing = true; this.state = "installing";
+    setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (e) { this.installing = false; this.state = "error"; this.error = String(e.message || e); } }, 5000);
   },
   check() { if (!autoUpdater || !app.isPackaged) return; if (process.env.PORTABLE_EXECUTABLE_DIR) { this.state = "portable"; return; } try { autoUpdater.checkForUpdates().catch(e => { this.state = "error"; this.error = String(e && e.message || e).slice(0, 300); }); } catch (e) { this.state = "error"; this.error = String(e.message || e); } },
   async act(what) {
     if (!autoUpdater || !app.isPackaged) return { ok: false, error: "설치형 EXE 에서만 됩니다" };
     if (what === "check") { this.check(); return { ok: true, message: "확인 중" }; }
     if (what === "download") { if (this.state !== "available") return { ok: false, error: "받을 업데이트가 없습니다" }; this.state = "downloading"; this.progress = 0; autoUpdater.downloadUpdate().catch(e => { this.state = "error"; this.error = String(e && e.message || e).slice(0, 300); }); return { ok: true, message: "내려받는 중" }; }
-    if (what === "install") { if (this.state !== "downloaded") return { ok: false, error: "아직 내려받지 않았습니다" }; setTimeout(() => autoUpdater.quitAndInstall(false, true), 300); return { ok: true, message: "설치를 시작합니다" }; }
+    if (what === "install") { if (!/^downloaded/.test(this.state)) return { ok: false, error: "아직 내려받지 않았습니다" }; this.state = "downloaded"; this.installing = false; this.tryInstall(); return { ok: true, message: "설치를 시작합니다" }; }
     return { ok: false, error: "모르는 동작" };
   }
 };
@@ -422,7 +429,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   win.once("ready-to-show", () => { win.show(); if (st.max) win.maximize(); });
   const save = () => { if (!win) return; const b = win.getNormalBounds(); writeCfg(Object.assign(readCfg(), { win: { x: b.x, y: b.y, w: b.width, h: b.height, max: win.isMaximized() } })); };
-  win.on("close", e => { save(); if (RUN.proc && RUN.exit == null) { const r = dialog.showMessageBoxSync(win, { type: "warning", buttons: ["계속 실행", "중단하고 닫기"], defaultId: 0, cancelId: 0, message: "AI 작업이 아직 진행 중입니다", detail: "창을 닫으면 제작이 중단됩니다." }); if (r === 0) { e.preventDefault(); return; } RUN.stop(); } });
+  win.on("close", e => { save(); if (UPD.installing) return; if (RUN.proc && RUN.exit == null) { const r = dialog.showMessageBoxSync(win, { type: "warning", buttons: ["계속 실행", "중단하고 닫기"], defaultId: 0, cancelId: 0, message: "AI 작업이 아직 진행 중입니다", detail: "창을 닫으면 제작이 중단됩니다." }); if (r === 0) { e.preventDefault(); return; } RUN.stop(); } });
   win.on("closed", () => { win = null; });
   win.loadURL(`http://127.0.0.1:${PORT}/app/`);
 }

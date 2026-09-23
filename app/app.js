@@ -202,32 +202,23 @@ const Local = {
   updateAct(what) { return this._j("/local/update?do=" + what, { method: "POST" }); }
 };
 
-/* ═══ 자동 업데이트 — GitHub 릴리스가 새로 올라오면 정중앙 팝업 ═══ */
+/* ═══ 자동 업데이트 — 조용히. 내려받는 건 백그라운드, 설치는 틈 날 때 알아서 재시작 ═══ */
 const Update = {
   shown: "", timer: null,
   async poll(force) {
     if (!Local.desktop) return;
     let u; try { u = await Local.update(); } catch (e) { return; }
-    if (u.state === "available" && (force || this.shown !== u.version)) { this.shown = u.version; this.offer(u); }
-    else if (u.state === "downloaded" && this.shown !== "dl" + u.version) { this.shown = "dl" + u.version; this.ready(u); }
+    const key = u.state + ":" + u.version;
+    if (key !== this.shown || force) {
+      if (u.state === "available" || u.state === "downloading") UI.toast(`새 버전 ${u.version} 내려받는 중 — 작업은 계속하셔도 됩니다`);
+      else if (u.state === "installing") UI.toast(`업데이트 ${u.version} 적용 — 잠시 후 자동으로 다시 열립니다`, "o");
+      else if (u.state === "downloaded-wait") UI.toast(`업데이트 ${u.version} 준비됨 — AI 작업이 끝나면 자동으로 적용됩니다`);
+      else if (u.state === "error" && force) UI.toast("업데이트 확인 실패: " + (u.error || ""), "w");
+      this.shown = key;
+    }
     return u;
   },
-  start() { if (!Local.desktop) return; setTimeout(() => this.poll(), 4000); this.timer = setInterval(() => this.poll(), 10 * 60 * 1000); },
-  async offer(u) {
-    const v = await UI.dialog({ title: `새 버전 ${u.version} 이 나왔습니다`, sub: `지금 ${u.current} 을 쓰고 있습니다. 내려받고 다시 시작하면 바로 적용됩니다.`, icon: "sparkles", tone: "o", dismissable: false,
-      body: u.notes ? `<div class="note i" style="max-height:200px;overflow:auto">${svg("info")}<div class="nb">${esc(u.notes).replace(/\n/g, "<br>")}</div></div>` : `<p class="hint" style="margin:0">작업 중인 내용은 그대로 남습니다. 설치는 30초쯤 걸립니다.</p>`,
-      buttons: [{ label: "나중에", value: 0 }, { label: "지금 업데이트", value: 1, kind: "pri" }] });
-    if (v !== 1) return;
-    try { await Local.updateAct("download"); } catch (e) { return UI.alert("내려받기 실패", esc(e.message), "d"); }
-    UI.toast("업데이트 내려받는 중…", "o");
-    const tick = async () => { let s; try { s = await Local.update(); } catch (e) { return; } if (s.state === "downloading") { UI.toast(`내려받는 중 ${s.progress}%`); setTimeout(tick, 2500); } else if (s.state === "downloaded") this.ready(s); else if (s.state === "error") UI.alert("업데이트 실패", esc(s.error), "d"); };
-    setTimeout(tick, 2500);
-  },
-  async ready(u) {
-    if (RunUI.open && RunUI.timer) { UI.toast("AI 작업이 끝나면 다시 알려드립니다", "w"); this.shown = ""; return; }
-    const v = await UI.dialog({ title: `업데이트 ${u.version} 준비 완료`, sub: "지금 다시 시작하면 설치됩니다. 나중에 닫을 때 자동으로 설치돼요.", icon: "check", tone: "o", buttons: [{ label: "나중에", value: 0 }, { label: "다시 시작하여 설치", value: 1, kind: "pri" }] });
-    if (v === 1) { try { await Local.updateAct("install"); } catch (e) { UI.alert("설치 실패", esc(e.message), "d"); } }
-  }
+  start() { if (!Local.desktop) return; setTimeout(() => this.poll(), 4000); this.timer = setInterval(() => this.poll(), 60 * 1000); }
 };
 
 /* ═══ 프로젝트 ═══ */
@@ -1084,7 +1075,7 @@ const Settings = { title: "설정", render(v) {
   </div>`;
   renderConnect($("#connBox", v));
   if (Local.desktop) {
-    const showU = u => { const V = $("#updV", v), S = $("#updS", v); if (!V) return; V.textContent = "v" + (u.current || "?"); S.textContent = u.state === "available" ? `새 버전 ${u.version} 있음` : u.state === "downloaded" ? `${u.version} 내려받음 — 다시 시작하면 설치` : u.state === "latest" ? "최신 버전입니다" : u.state === "checking" ? "확인 중…" : u.state === "error" ? "확인 실패: " + (u.error || "") : u.state === "unsupported" ? "개발 실행에서는 꺼져 있습니다" : "GitHub 에 새 버전이 올라오면 정중앙 팝업으로 알려드립니다."; };
+    const showU = u => { const V = $("#updV", v), S = $("#updS", v); if (!V) return; V.textContent = "v" + (u.current || "?"); S.textContent = u.state === "available" || u.state === "downloading" ? `새 버전 ${u.version} 내려받는 중` : u.state === "downloaded" || u.state === "downloaded-wait" ? `${u.version} 준비됨 — 한가할 때 자동 적용` : u.state === "installing" ? `${u.version} 적용 중 — 곧 다시 열립니다` : u.state === "latest" ? "최신 버전입니다" : u.state === "checking" ? "확인 중…" : u.state === "error" ? "확인 실패: " + (u.error || "") : u.state === "unsupported" ? "개발 실행에서는 꺼져 있습니다" : "새 버전은 알아서 내려받고 자동으로 적용됩니다."; };
     Local.update().then(showU).catch(() => {});
     $("#updChk", v).onclick = async () => { try { await Local.updateAct("check"); } catch (e) {} UI.toast("확인 중…"); setTimeout(async () => { const u = await Update.poll(true); if (u) showU(u); }, 4000); };
   }

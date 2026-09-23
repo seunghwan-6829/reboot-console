@@ -135,11 +135,11 @@ Claude 세션에서 Higgsfield 도구가 보이는지, `balance` 로 크레딧�
 
 ### re:boot 제작 콘솔
 
-**EXE 는 하나.** 루트의 `re-boot 콘솔.exe` 를 더블클릭하면 조용히 설치되고 바로 열립니다(시작 메뉴·바탕화면에 **re:boot 콘솔**). 그 뒤로는 그 아이콘으로 켜고, 새 버전은 정중앙 팝업 → 한 번에 설치. 다른 PC 는 GitHub Releases 의 `reboot-console-setup-<버전>.exe` 를 받으면 됩니다. 포터블은 없앴습니다.
+**EXE 는 하나.** 루트의 `re-boot 콘솔.exe` 를 더블클릭하면 조용히 설치되고 바로 열립니다(시작 메뉴·바탕화면에 **re:boot 콘솔**). 그 뒤로는 그 아이콘으로 켜고, 새 버전은 **알아서 내려받아 한가할 때 자동 재시작으로 적용**(AI 작업 중이면 끝난 뒤, 아니면 닫을 때). 팝업 없음. 다른 PC 는 GitHub Releases 의 `reboot-console-setup-<버전>.exe` 를 받으면 됩니다. 포터블은 없앴습니다.
 
 첫 실행 때 **프로젝트 루트**(상품 폴더들을 둘 상위 폴더)를 묻습니다. 그 뒤로는 앱 안에서 **새 프로젝트**(이름만) → **사진 드롭/붙여넣기** → 브리프 → 제작 → 검수 → 전달까지 전부 돌아갑니다. 파이썬·bat·브라우저·포터블은 더 이상 없습니다.
 
-**배포 (업데이트 올리기)** — 저장소 <https://github.com/seunghwan-6829/reboot-console> (공개, 콘솔 소스만). 절차: ① `desktop/package.json` 의 `version` 올리기 → ② `desktop/` 에서 `GH_TOKEN=$(gh auth token) npm run release` → Releases 에 setup·portable·`latest.yml` 이 올라감 → ③ 설치된 콘솔들이 켤 때/6시간마다 확인해 **정중앙 팝업** → 지금 업데이트 → 다시 시작하면 설치. 소스 동기화는 `_repo/` 에서 (`make_repo.py` 로 스테이징 후 커밋·푸시; 홈 디렉터리 git 과 별개인 중첩 저장소).
+**배포 (업데이트 올리기)** — 저장소 <https://github.com/seunghwan-6829/reboot-console> (공개, 콘솔 소스만). 절차: ① `desktop/package.json` 의 `version` 올리기 → ② `desktop/` 에서 `GH_TOKEN=$(gh auth token) npm run release` → Releases 에 setup·portable·`latest.yml` 이 올라감 → ③ 설치된 콘솔들이 켤 때/6시간마다 확인해 **조용히 내려받고 자동 적용**. 소스 동기화는 `_repo/` 에서 (`make_repo.py` 로 스테이징 후 커밋·푸시; 홈 디렉터리 git 과 별개인 중첩 저장소).
 EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/`. 개발 실행은 `npm start`. 화면 소스는 `app/`(EXE 에 통째로 들어감). (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
 
 **브라우저 권한 팝업이 뜨지 않습니다.** 서버가 프로젝트 폴더를 대신 읽고 씁니다(`/local/*` API). v4 에서 브라우저 폴더권한(FSA) 경로는 제거했습니다.
