@@ -349,7 +349,6 @@ async function handle(req, res) {
       fs.renameSync(fp, path.join(trash, Date.now() + "_" + f));   // 바로 지우지 않고 _trash 로
       return json(res, 200, { ok: true });
     }
-    if (p === "/local/shutdown") return json(res, 200, { ok: true });
     if (p === "/" ) { res.writeHead(302, { Location: "/app/" }); return res.end(); }
     if (p === "/app" || p.startsWith("/app/")) return serveFile(res, APP_DIR, p.slice(4) || "/");
     if (!ROOT) { res.writeHead(404); return res.end(); }

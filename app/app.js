@@ -234,7 +234,7 @@ const FS = {
   name: "", files: [], analysis: [], summary: null, tileMeta: {},
 
   async connect() {
-    if (!Local.ok) { await UI.alert("서버가 없습니다", "<code>콘솔_열기.bat</code> 또는 <b>re-boot 콘솔.exe</b> 로 실행해야 폴더를 읽을 수 있습니다.", "w"); return false; }
+    if (!Local.ok) { await UI.alert("서버가 없습니다", "<b>re-boot 콘솔.exe</b> 로 실행해야 합니다.", "w"); return false; }
     let list;
     try { list = await Local.projects(true); } catch (e) { await UI.alert("폴더 목록을 읽지 못했습니다", esc(e.message), "w"); return false; }
     const pick = await UI.dialog({
@@ -415,8 +415,7 @@ const NAV = [
   { id: "projects", icon: "folder", label: "프로젝트" },
   { id: "brief",    icon: "doc",    label: "브리프" },
   { id: "tiles",    icon: "grid",   label: "타일" },
-  { id: "review",   icon: "check",  label: "검수" },
-  { id: "cloud",    icon: "cloud",  label: "클라우드" }
+  { id: "review",   icon: "check",  label: "검수" }
 ];
 function renderRail() {
   const r = $("#rail");
@@ -508,10 +507,10 @@ function renderSide() {
 
 /* ═══ 뷰 전환 ═══ */
 function go(v) {
-  if (v === "photos") v = "brief"; if (v === "connect") v = "settings";
+  if (v === "photos") v = "brief"; if (v === "connect" || v === "cloud") v = "settings";
   App.view = v;
   $$("#rail .rbtn").forEach(b => b.classList.toggle("on", b.dataset.go === v));
-  const R = { home: Home, projects: Projects, brief: Brief, tiles: Tiles, review: Review, cloud: Cloud, settings: Settings }[v] || Home;
+  const R = { home: Home, projects: Projects, brief: Brief, tiles: Tiles, review: Review, settings: Settings }[v] || Home;
   $("#crumb").innerHTML = `<b>${esc(FS.name || "re:boot")}</b><span class="sepc">/</span>${esc(R.title)}`;
   const old = $("#view"), nv = old.cloneNode(false); old.replaceWith(nv);
   nv.classList.add("enter"); setTimeout(() => nv.classList.remove("enter"), 400);
@@ -575,7 +574,7 @@ const fmtD = t => { if (!t) return "—"; const d = new Date(t * 1000); return `
 const fmtDur = sec => { if (sec == null || sec < 0) return "—"; if (sec < 60) return "1분 미만"; const m = Math.round(sec / 60); if (m < 60) return m + "분"; const h = Math.floor(m / 60); if (h < 24) return h + "시간 " + (m % 60 ? (m % 60) + "분" : ""); const d = Math.floor(h / 24); return d + "일 " + (h % 24 ? (h % 24) + "시간" : ""); };
 const fmtAgo = t => { if (!t) return ""; const s = Date.now() / 1000 - t; if (s < 3600) return Math.max(1, Math.round(s / 60)) + "분 전"; if (s < 86400) return Math.round(s / 3600) + "시간 전"; return Math.round(s / 86400) + "일 전"; };
 const Projects = { title: "프로젝트", async render(v) {
-  if (!Local.ok) { v.innerHTML = `<div class="wrap"><h1 class="pg">프로젝트</h1><div class="note w">${svg("warn")}<div class="nb"><code>콘솔_열기.bat</code> 또는 <b>re-boot 콘솔.exe</b> 로 실행해야 폴더 목록을 읽을 수 있습니다.</div></div></div>`; return; }
+  if (!Local.ok) { v.innerHTML = `<div class="wrap"><h1 class="pg">프로젝트</h1><div class="note w">${svg("warn")}<div class="nb"><b>re-boot 콘솔.exe</b> 로 실행해야 합니다.</div></div></div>`; return; }
   v.innerHTML = `<div class="wrap wide"><div class="empty"><div class="eic">${svg("folder")}</div><b>불러오는 중…</b></div></div>`;
   let list = []; try { list = await Local.projects(true); } catch (e) {}
   if (App.view !== "projects") return;
@@ -1009,7 +1008,7 @@ const RunUI = {
 let connPoll = null;
 async function renderConnect(box, silent) {
   if (!Local.desktop) {
-    box.innerHTML = `<div class="note i">${svg("info")}<div class="nb"><b>버튼 세팅은 EXE(re-boot 콘솔.exe)에서만 됩니다.</b> 파이썬 런처로 쓰는 중이면 터미널에서 직접 해주세요.</div></div>
+    box.innerHTML = `<div class="note i">${svg("info")}<div class="nb"><b>EXE(re-boot 콘솔.exe)에서만 됩니다.</b></div></div>
       <ol class="ul"><li>Claude Code: <code>npm i -g @anthropic-ai/claude-code</code> → <code>claude auth login</code></li>
       <li>Higgsfield MCP: <code>claude mcp add --transport http --scope user higgsfield https://mcp.higgsfield.ai/mcp</code> → <code>claude mcp login higgsfield</code></li>
       <li>GPT Codex CLI(선택): <code>npm i -g @openai/codex</code> → <code>codex login</code></li></ol>`;
@@ -1049,53 +1048,12 @@ async function renderConnect(box, silent) {
   };
 }
 
-/* ── 클라우드 ── */
-const Cloud = { title: "클라우드", session: null, projects: null, busy: false, apiMissing: false,
-  get available() { return /^https?:$/.test(location.protocol); },
-  async api(path, opt) { const r = await fetch("/api/" + path, Object.assign({ headers: { "Content-Type": "application/json" }, credentials: "same-origin" }, opt || {})); let j = null; try { j = await r.json(); } catch (e) {} if (!r.ok) throw new Error((j && j.error) || `요청 실패 (${r.status})`); return j; },
-  async check() { this.apiMissing = false; if (!this.available) return null;
-    try { const r = await fetch("/api/me", { credentials: "same-origin" }); const ct = r.headers.get("content-type") || ""; if (r.status === 404 || !ct.includes("application/json")) { this.apiMissing = true; this.session = null; return null; } const j = await r.json(); this.session = j && j.ok ? j : null; } catch (e) { this.apiMissing = true; this.session = null; } return this.session; },
-  async thumbs() { const out = []; for (const t of App.tiles.slice(0, 40)) { try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = t.f; }); const L = 480, sc = Math.min(1, L / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); out.push({ name: t.n, dataUrl: c.toDataURL("image/jpeg", 0.72) }); } catch (e) {} } return out; },
-  async save() { if (this.busy) return; this.busy = true;
-    try { UI.toast("썸네일 만드는 중…"); const thumbs = await this.thumbs(), p = App.progress();
-      const j = await this.api("projects", { method: "POST", body: JSON.stringify({ project: FS.name || Store.get("lastProject", "프로젝트"), brief: App.brief, review: App.review, order: buildOrder(), briefDone: p.done, briefTotal: p.total, photos: photoRows(), photoSummary: FS.summary, tiles: App.tiles.map(t => ({ n: t.n, name: t.name, copy: t.copy })), thumbs }) });
-      UI.toast(`서버에 올렸습니다 — 썸네일 ${j.thumbs}장`, "o"); this.projects = null; if (App.view === "cloud") go("cloud"); }
-    catch (e) { UI.alert("업로드 실패", esc(e.message), "d"); } finally { this.busy = false; } },
-  async load() { const j = await this.api("projects"); this.projects = j.projects || []; return this.projects; },
-  async render(v) {
-    if (!this.available) { v.innerHTML = `<div class="wrap"><h1 class="pg">클라우드</h1><div class="note w">${svg("warn")}<div class="nb">지금은 <code>${esc(location.protocol)}</code> 로 열려 있어 서버 기능을 쓸 수 없습니다.</div></div></div>`; return; }
-    v.innerHTML = `<div class="wrap"><div class="empty"><div class="eic">${svg("cloud")}</div><b>확인 중…</b></div></div>`;
-    await this.check();
-    if (this.apiMissing) { v.innerHTML = `<div class="wrap"><h1 class="pg">클라우드</h1><p class="pgsub">작업 기록을 서버에 보관하고 어디서든 받아봅니다.</p>
-      <div class="note i">${svg("info")}<div class="nb"><b>로컬 실행 중입니다.</b> 서버 기능(<code>/api</code>)은 Vercel에 배포한 주소에서만 동작합니다. 로컬에서는 <b>폴더 직접 저장</b>과 <b>클라이언트 프리뷰</b>를 쓰시면 됩니다.</div></div>
-      <div class="card open"><div class="cbody" style="border-top:0"><h3 class="h3" style="margin-top:14px">배포하면 이런 게 됩니다</h3><ul class="ul"><li>대표자 이메일 + 비밀번호로 로그인</li><li>브리프·사진분석·검수·지시서 기록과 썸네일을 서버에 보관</li><li>다른 PC에서 접속해 기록을 JSON으로 내려받기</li></ul><p class="hint" style="margin-top:12px">배포 방법은 <code>README.md</code> 12절.</p></div></div></div>`; return; }
-    if (!this.session) { v.innerHTML = `<div class="wrap" style="max-width:420px;padding-top:70px"><div style="text-align:center;margin-bottom:26px"><img src="assets/icon-192.png" alt="" style="width:46px;height:46px;border-radius:12px"><h1 class="pg" style="font-size:22px;margin:16px 0 4px">로그인</h1><p class="pgsub" style="margin:0">작업 기록을 서버에 보관합니다.</p></div>
-        <div class="fld"><label>이메일</label><input type="text" id="lgEmail" autocomplete="username" placeholder="you@example.com"></div>
-        <div class="fld"><label>비밀번호</label><input type="password" id="lgPw" autocomplete="current-password" placeholder="••••••••" class="pw"></div>
-        <button class="btn pri blk lg" id="lgGo" style="margin-top:8px">${svg("lock")} 로그인</button><p class="hint" style="margin-top:14px;text-align:center">비밀번호는 서버에 <b>해시로만</b> 저장됩니다.</p></div>`;
-      const doLogin = async () => { const email = $("#lgEmail").value.trim(), password = $("#lgPw").value; if (!email || !password) return UI.toast("이메일과 비밀번호를 입력해 주세요", "w"); $("#lgGo").disabled = true;
-        try { await this.api("login", { method: "POST", body: JSON.stringify({ email, password }) }); UI.toast("로그인했습니다", "o"); go("cloud"); } catch (e) { $("#lgGo").disabled = false; UI.alert("로그인 실패", esc(e.message), "d"); } };
-      $("#lgGo").onclick = doLogin; [$("#lgEmail"), $("#lgPw")].forEach(i => i.onkeydown = e => { if (e.key === "Enter") doLogin(); }); return; }
-    if (!this.projects) { try { await this.load(); } catch (e) { this.projects = []; } }
-    const list = this.projects || [];
-    v.innerHTML = `<div class="wrap wide"><div class="vhead"><h1 class="pg">클라우드</h1><div class="sp"></div><button class="btn" id="cSave">${svg("cloud")} 현재 작업 올리기</button><button class="btn ghost" id="cOut">로그아웃</button></div>
-      <p class="pgsub">${esc(this.session.email || "")} · 기록 ${list.length}건 · 기록과 썸네일만 올라갑니다.</p>
-      ${!list.length ? `<div class="empty"><div class="eic">${svg("cloud")}</div><b>아직 올린 기록이 없습니다</b></div>` : `<div class="tgrid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${list.map(p => `<div class="tcard flat"><b style="display:block;font-size:14.5px;margin-bottom:3px">${esc(p.project || p.id)}</b><small style="display:block;color:var(--ink-3);font-size:12px">${new Date(p.savedAt).toLocaleString("ko-KR")}</small><div style="display:flex;gap:5px;margin:11px 0 12px;flex-wrap:wrap"><span class="tag n">브리프 ${p.briefDone}/${p.briefTotal}</span><span class="tag n">타일 ${p.tiles}</span><span class="tag n">썸네일 ${p.thumbs}</span></div><div style="display:flex;gap:6px"><button class="btn sm" data-dl="${esc(p.id)}">${svg("down")} 받기</button><button class="btn sm dgr" data-rm="${esc(p.id)}">${svg("trash")}</button></div></div>`).join("")}</div>`}</div>`;
-    $("#cSave").onclick = () => this.save();
-    $("#cOut").onclick = async () => { await this.api("logout", { method: "POST" }).catch(() => {}); this.session = null; this.projects = null; go("cloud"); UI.toast("로그아웃했습니다"); };
-    v.onclick = async e => {
-      const d = e.target.closest("[data-dl]"); if (d) { try { const j = await this.api("projects?id=" + encodeURIComponent(d.dataset.dl)); const b = new Blob([JSON.stringify(j.record, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = d.dataset.dl + ".json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); UI.toast("기록을 내려받았습니다", "o"); } catch (err) { UI.alert("다운로드 실패", esc(err.message), "d"); } }
-      const r = e.target.closest("[data-rm]"); if (r) { const ok = await UI.confirm("이 기록을 지울까요?", `<b>${esc(r.dataset.rm)}</b> 의 서버 기록과 썸네일을 삭제합니다. 로컬 파일은 그대로입니다.`, { ok: "삭제", danger: true }); if (!ok) return; try { await this.api("projects?id=" + encodeURIComponent(r.dataset.rm), { method: "DELETE" }); this.projects = null; go("cloud"); UI.toast("삭제했습니다"); } catch (err) { UI.alert("삭제 실패", esc(err.message), "d"); } }
-    };
-  }
-};
-
 /* ── 설정 ── */
 const Settings = { title: "설정", render(v) {
   const seg = (k, opts) => `<div class="seg" data-set="${k}">${opts.map(o => `<button class="${SET[k] === o[0] ? "on" : ""}" data-v="${o[0]}">${o[1]}</button>`).join("")}</div>`;
   const tog = (k, label, desc) => `<label class="srow"><span><b>${label}</b><small>${desc}</small></span><input type="checkbox" class="sw" data-set="${k}"${SET[k] ? " checked" : ""}></label>`;
   const num = (k, label, desc, min, max, step, unit) => `<label class="srow"><span><b>${label}</b><small>${desc}</small></span><span class="numin"><input type="number" data-set="${k}" value="${SET[k]}" min="${min}" max="${max}" step="${step || 1}"><em>${unit || ""}</em></span></label>`;
-  v.innerHTML = `<div class="wrap"><h1 class="pg">설정</h1><p class="pgsub">${Local.desktop ? `EXE 모드 · 내장 서버` : Local.ok ? `파이썬 런처 모드 · <code>콘솔_열기.bat</code>` : `<span style="color:var(--warn)">서버 없음</span> — 폴더 기능이 꺼져 있습니다`}${FS.name ? ` · 열린 프로젝트 <b>${esc(FS.name)}</b>` : ""}</p>
+  v.innerHTML = `<div class="wrap"><h1 class="pg">설정</h1><p class="pgsub">${Local.desktop ? `EXE 모드 · 내장 서버` : Local.ok ? `서버 모드` : `<span style="color:var(--warn)">서버 없음</span> — 폴더 기능이 꺼져 있습니다`}${FS.name ? ` · 열린 프로젝트 <b>${esc(FS.name)}</b>` : ""}</p>
 
     <h3 class="h3">연결 — AI 도구</h3>
     <div class="card open"><div class="cbody" style="border-top:0"><div id="connBox" style="margin-top:14px"></div></div></div>
@@ -1154,7 +1112,7 @@ async function aiReady() {
 const ACT = {
   gobrief() { go("brief"); }, gotiles() { go("tiles"); }, goreview() { go("review"); }, goprojects() { go("projects"); }, reconnect() { go("settings"); },
   async newproj() {
-    if (!Local.ok) return UI.alert("서버가 없습니다", "EXE 또는 <code>콘솔_열기.bat</code> 으로 실행해야 프로젝트를 만들 수 있습니다.", "w");
+    if (!Local.ok) return UI.alert("서버가 없습니다", "<b>re-boot 콘솔.exe</b> 로 실행해야 합니다.", "w");
     const today = new Date().toISOString().slice(2, 10).replace(/-/g, "");
     const v = await UI.dialog({ title: "새 프로젝트", sub: "상품 이름만 정하면 됩니다. 사진은 다음 화면에서 끌어다 넣으세요.", icon: "plus", tone: "b",
       body: `<div class="fld"><label>상품 이름</label><input type="text" id="npName" placeholder="예: 벤딕트 에어건" maxlength="40"></div><p class="hint">폴더 이름은 <code>${today}_상품이름</code> 으로 만들어집니다.</p>`,
@@ -1212,7 +1170,7 @@ const ACT = {
   async revise() {
     const targets = App.tiles.filter(t => App.hasReq(t.n));
     if (!targets.length) return UI.toast("영역이나 요청을 먼저 남겨주세요", "w");
-    if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "EXE 또는 <code>콘솔_열기.bat</code> 으로 실행한 상태에서만 됩니다.", "w");
+    if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "EXE 로 실행한 상태에서만 됩니다.", "w");
     const ok = await UI.dialog({ title: "검수 반영 — AI 수정", sub: `${targets.length}장 · 영역 ${App.tally().regions}개. 표시된 영역과 코멘트만 반영하고 나머지는 그대로 둡니다.`, icon: "sparkles", tone: "o",
       body: `<ul class="ul">${targets.map(t => { const r = App.review[t.n]; return `<li><b>${esc(t.n)}${t.name ? ". " + esc(t.name) : ""}</b> — 영역 ${(r.regions || []).length}개${(r.note || "").trim() ? " · 전체 요청" : ""}</li>`; }).join("")}</ul><p class="hint" style="margin-top:10px">영역 표시본이 <code>review/</code> 에 저장되고 AI 가 그 번호를 보고 고칩니다. 원본은 <code>tiles/v_prev/</code> 에 백업됩니다.</p>`,
       buttons: [{ label: "취소", value: 0 }, { label: Local.desktop ? "AI 수정 시작" : "파일 저장 + 명령 복사", value: 1, kind: "pri" }] });
@@ -1231,7 +1189,7 @@ const ACT = {
   },
   async exportPreview() {
     if (!App.tiles.length) return UI.toast("내보낼 타일이 없습니다", "w");
-    if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "<code>콘솔_열기.bat</code> 또는 EXE로 실행한 상태에서만 내보낼 수 있습니다.", "w");
+    if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "EXE 로 실행한 상태에서만 내보낼 수 있습니다.", "w");
     const ok = await UI.dialog({ title: "클라이언트 프리뷰 내보내기", sub: `타일 ${App.tiles.length}장을 한 파일(HTML)로 묶습니다. 원본 픽셀은 손대지 않습니다.`, icon: "eye", tone: "b",
       body: `<div class="fld"><label>버전 표기</label><input type="text" id="exVer" value="v1" maxlength="12"></div><p class="hint">지금 왼쪽 메뉴의 순서대로 들어갑니다. 받는 분은 더블클릭으로 열어 모바일·태블릿 폭 전환, 배율, 장별 피드백 작성·복사가 됩니다.</p>`,
       buttons: [{ label: "취소", value: null }, { label: "내보내기", value: "go", kind: "pri" }], onOpen(d) { setTimeout(() => $("#exVer", d) && $("#exVer", d).select(), 60); } });
@@ -1289,7 +1247,7 @@ async function boot() {
   let fresh = true; try { fresh = !sessionStorage.getItem("reboot:booted"); sessionStorage.setItem("reboot:booted", "1"); } catch (e) {}
   go(!fresh && restored ? Store.get("view", "home") : "home");
   if (restored) UI.toast(`${FS.name} — 이어서 작업합니다`, "o");
-  else if (!Local.ok) UI.toast("서버가 없어 폴더 기능이 꺼져 있습니다", "w");
+  else if (!Local.ok) UI.toast("EXE 로 실행해 주세요 — 지금은 화면만 보입니다", "w");
   if (Local.desktop) { try { const st = await Local.runStatus(0); if (st.running) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`); } catch (e) {} Update.start(); }
 }
 document.addEventListener("DOMContentLoaded", boot);

@@ -135,17 +135,12 @@ Claude 세션에서 Higgsfield 도구가 보이는지, `balance` 로 크레딧�
 
 ### re:boot 제작 콘솔
 
-**실행은 두 가지.** 둘 다 같은 앱(`app/`)이고, 서버만 다릅니다.
+**실행은 EXE 하나.** 설치형 `re-boot 콘솔 설치.exe`(GitHub Releases 의 `reboot-console-setup-<버전>.exe`) 를 설치하면 시작 메뉴/바탕화면에 **re:boot 콘솔**이 생깁니다. 새 버전이 올라오면 정중앙 팝업으로 알리고 한 번에 설치합니다. 포터블(`reboot-console-portable-<버전>.exe`)은 USB 용이며 자동 업데이트가 없습니다.
 
-| 방법 | 파일 | 서버 | 언제 |
-|---|---|---|---|
-| **설치형 EXE (권장)** | GitHub Releases 의 `reboot-console-setup-<버전>.exe` | Electron 내장 Node | 평소. 파이썬 불필요. **새 버전이 올라오면 정중앙 팝업**으로 알리고 한 번에 설치 |
-| 포터블 EXE | `re-boot 콘솔.exe` / Releases 의 `reboot-console-portable-<버전>.exe` | 동일 | USB 로 들고 다닐 때. 자동 업데이트 없음 |
-| 파이썬 런처 | `콘솔_열기.bat` → `_launch.py` | localhost:8777 | EXE 를 못 쓰는 PC. 브라우저에서 열림. 연결 버튼은 안 됨(수동 안내만) |
+첫 실행 때 **프로젝트 루트**(상품 폴더들을 둘 상위 폴더)를 묻습니다. 그 뒤로는 앱 안에서 **새 프로젝트**(이름만) → **사진 드롭/붙여넣기** → 브리프 → 제작 → 검수 → 전달까지 전부 돌아갑니다. 파이썬·bat·브라우저는 더 이상 쓰지 않습니다(옛 웹 버전은 `_old/웹버전(파이썬·Vercel)/` 에 보관).
 
-EXE 는 처음 켤 때 **프로젝트 루트**(상품 폴더들이 있는 상위 폴더)를 정합니다. 기본은 EXE 가 놓인 폴더. 설정에서 바꿀 수 있고 `%APPDATA%\re-boot 콘솔\config.json` 에 저장됩니다.
 **배포 (업데이트 올리기)** — 저장소 <https://github.com/seunghwan-6829/reboot-console> (공개, 콘솔 소스만). 절차: ① `desktop/package.json` 의 `version` 올리기 → ② `desktop/` 에서 `GH_TOKEN=$(gh auth token) npm run release` → Releases 에 setup·portable·`latest.yml` 이 올라감 → ③ 설치된 콘솔들이 켤 때/6시간마다 확인해 **정중앙 팝업** → 지금 업데이트 → 다시 시작하면 설치. 소스 동기화는 `_repo/` 에서 (`make_repo.py` 로 스테이징 후 커밋·푸시; 홈 디렉터리 git 과 별개인 중첩 저장소).
-EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/`. 개발 실행은 `npm start`. (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
+EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm run dist` → `desktop/dist/`. 개발 실행은 `npm start`. 화면 소스는 `app/`(EXE 에 통째로 들어감). (⚠ `electron .` 은 한글 경로에서 조용히 죽음 — 스크립트가 `electron main.js` 로 되어 있음)
 
 **브라우저 권한 팝업이 뜨지 않습니다.** 서버가 프로젝트 폴더를 대신 읽고 씁니다(`/local/*` API). v4 에서 브라우저 폴더권한(FSA) 경로는 제거했습니다.
 
@@ -156,7 +151,6 @@ EXE 를 로컬에서만 만들려면 `desktop/` 에서 `npm install` → `npm ru
 | **브리프** | 0단계 **사진** — 드롭존(끌어놓기·클릭·Ctrl+V), 카드마다 ✕ 로 빼기(파일은 `_trash/` 로 이동) + 자동 분석. 1~7단계 아코디언, 6단계 **제품 사진 처리**. JSON 저장/지시서 버튼은 없앰 — 브리프는 자동 저장, `order.json`·`review.json` 은 AI 가 읽는 내부 파일 |
 | **타일** | 이어붙이기(대지 중앙 · Ctrl+휠/±/버튼 배율 25~200%) / 그리드. 왼쪽 목록을 **잡고 끌면 순서가 바뀌고** `tiles/manifest.json._order` 에 저장 → 타일·내보내기에 반영 |
 | **검수** | 장마다 **영역 잡기(D)** → 이미지 위를 끌어 빨간 박스 → 번호별 코멘트. 한 장에 여러 개. 장 전체 요청은 아래 칸. 판정·좋았던점·연장 UI는 없앴음. **검수 반영 — AI 수정 실행** 이 `review.json` + `review/NN_marked.png` 를 만들고 EXE 에선 Claude Code 를 바로 돌림 |
-| **클라우드** | Vercel 배포본에서만 활성 |
 | **설정** | **연결**(Claude Code 로그인 / Higgsfield MCP 등록·인증 / Codex 로그인 — 전부 **창 없이 브라우저 로그인**, 상태는 자동 폴링) · 테마 · 작업 설정 · 초기화 |
 
 **흐름** — 홈 **새 프로젝트**(이름만) → 브리프 0단계에 사진을 **끌어다 놓기 / 클릭 선택 / Ctrl+V** → 즉시 분석 → **자동으로 브리프로 이동** → 섹션마다 적용 → 마지막에 **AI로 상세페이지 만들기** → `order.json` 저장 + 한 줄 명령 안내(`○○ 만들어줘`) → 대화창에 붙여넣기.
@@ -303,10 +297,9 @@ NO margin band and NO vignette at the top or bottom edge.
 | **git 루트가 홈** | `C:\Users\user` 가 저장소 루트. 여기서 커밋 금지 |
 | **`convert` 는 ImageMagick 아님** | Windows 디스크 포맷 도구. PIL을 쓸 것 |
 | **큰 HTML은 heredoc 금지** | Bash heredoc으로 쓰면 따옴표 때문에 깨짐. Write 도구 사용 |
-| **`file://` 은 폴더 저장 불가** | File System Access API가 막힘. `브리프_열기.bat` 으로 실행 |
 | **`reframe` 은 영상 전용** | 이미지 캔버스 확장은 `outpaint_image` |
 | **프롬프트 속 한국어 오타** | 내가 틀리게 적으면 그대로 렌더됨. 보내기 전에 한 번 더 읽을 것 |
-| **8777 이중 바인딩(해결)** | 진짜 원인은 Python `HTTPServer` 기본값 `SO_REUSEADDR` — Windows에선 **떠 있는 포트에 한 번 더 바인딩이 성공**해 서버가 둘이 되고 요청은 옛 쪽으로 감. `_launch.py` 가 `allow_reuse_address=False` 로 바인딩 실패를 강제하고, 실패 시 옛 서버에 `POST /local/shutdown` 을 보내 **인수**한다. 이제 `netstat/taskkill` 불필요. 단 2026-09-22 이전 코드로 뜬 서버는 shutdown 라우트가 없어 한 번은 수동 종료 |
+| **(옛 웹버전) 8777 이중 바인딩** | 진짜 원인은 Python `HTTPServer` 기본값 `SO_REUSEADDR` — Windows에선 **떠 있는 포트에 한 번 더 바인딩이 성공**해 서버가 둘이 되고 요청은 옛 쪽으로 감. `_launch.py` 가 `allow_reuse_address=False` 로 바인딩 실패를 강제하고, 실패 시 옛 서버에 `POST /local/shutdown` 을 보내 **인수**한다. 이제 `netstat/taskkill` 불필요. 단 2026-09-22 이전 코드로 뜬 서버는 shutdown 라우트가 없어 한 번은 수동 종료 |
 | **`claude -p` 헤드리스** | EXE 의 제작·검수 반영은 `claude -p "<prompt>" --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Read Write Edit MultiEdit Glob Grep Bash mcp__higgsfield WebFetch` 로 돈다. 허용 밖 도구는 거부되고 멈추지 않음. 로그인은 `claude auth status --json` 으로 판정 |
 | **`electron .` 한글 경로** | 개발 실행 시 `electron .` 은 패키지 해석에 실패해 아무 출력 없이 종료(exit 127). `electron main.js` 로 실행할 것. 빌드된 EXE 는 무관 |
 | **Electron 메인 오류는 안 보임** | 창이 없으면 예외가 어디에도 안 뜸 → `%APPDATA%\re-boot 콘솔\main-error.log` 확인 |
@@ -416,74 +409,6 @@ v1.2에서 **배송을 16:9 배너로 만들어 최상단(01)** 에, **Q&A·추�
 - 원본이 1200px 미만이면 먼저 `upscale_image` 를 두 번까지. 그래도 부족하면 기획안에 【확인】 "재촬영 권장" 을 남기고, `image_references` 재해석은 **하지 않는다**(라벨 날조 사고 재발 방지).
 - `reinterpret` 일 때만 `image_references` 허용. 그때도 "no certification logos/flags/origin text, keep label text exactly as: …" 를 프롬프트에 박는다.
 
-## 12. Vercel 배포 (클라우드 기록 보관)
+## 12. (삭제) Vercel 클라우드
 
-로그인 1인용(대표자 이메일 + 비밀번호), 저장은 **기록 + 썸네일만**. 타일 원본은 로컬에 둡니다.
-
-### 12-1. 무엇이 올라가나
-
-| 올라감 | 안 올라감 |
-|---|---|
-| 브리프 전체 | 타일 원본 PNG (장당 4~5MB) |
-| 사진 분석 결과 (해상도·팔레트·소견) | 원본 촬영본 |
-| 검수 판정 + 작업 지시서 | 전자책 PDF |
-| 타일 썸네일 (긴 변 480px JPEG, 최대 40장) | |
-
-### 12-2. 한 번만 하면 되는 준비
-
-**① 비밀번호 해시 만들기** — 폴더에서 실행합니다. 비밀번호 원문은 어디에도 저장되지 않습니다.
-
-```bash
-node app/hash-password.mjs "여기에_쓸_비밀번호"
-```
-
-`OWNER_PASSWORD_HASH` 와 `SESSION_SECRET` 두 줄이 출력됩니다. 복사해 두세요.
-
-**② 배포** — 배포 루트는 `app/` 폴더입니다.
-
-```bash
-cd app
-npx vercel
-```
-
-처음이면 Vercel 로그인과 프로젝트 생성을 물어봅니다. 그대로 따라가면 됩니다.
-
-**③ Blob 스토어 연결** — Vercel 대시보드 → 프로젝트 → **Storage** → **Blob** 생성 후 이 프로젝트에 연결.
-`BLOB_READ_WRITE_TOKEN` 은 Vercel이 자동으로 넣어줍니다.
-
-**④ 환경변수 3개** — Settings → Environment Variables
-
-```
-OWNER_EMAIL          = 대표자 이메일
-OWNER_PASSWORD_HASH  = ①에서 나온 scrypt$... 값
-SESSION_SECRET       = ①에서 나온 64자리 hex
-```
-
-**⑤ 재배포**
-
-```bash
-npx vercel --prod
-```
-
-### 12-3. 쓰는 법
-
-배포된 주소로 접속 → 좌측 레일의 **클라우드** → 로그인 →
-**현재 작업 올리기** 를 누르면 기록과 썸네일이 서버에 저장됩니다.
-다른 PC에서는 같은 주소로 로그인해 **받기** 로 JSON을 내려받으면 됩니다.
-
-사이드바 **작업 → 서버에 올리기** 로도 바로 올릴 수 있습니다.
-
-### 12-4. 보안 메모
-
-- 비밀번호는 **scrypt 해시**로만 보관합니다. 서버도 원문을 모릅니다.
-- 세션은 HMAC 서명된 **HttpOnly · Secure 쿠키**, 유효기간 30일.
-- 로그인 5회 연속 실패 시 해당 IP를 1분 잠급니다.
-- `SESSION_SECRET` 을 바꾸면 기존 로그인이 전부 풀립니다.
-
-### 12-5. 로컬에서는
-
-`콘솔_열기.bat` 으로 띄운 로컬 서버에는 `/api` 가 없습니다.
-클라우드 탭이 이를 감지해서 "로컬 실행 중" 안내를 띄우고, 로그인 화면을 보여주지 않습니다.
-로컬에서는 **폴더 직접 저장**과 **지시서 복사**를 쓰시면 됩니다.
-
-> 배포는 대표님 Vercel 계정으로 하셔야 해서 제가 대신 실행하지 않았습니다. 코드와 설정은 전부 준비돼 있습니다.
+EXE 전용으로 가면서 클라우드 메뉴와 `app/api` 를 뺐습니다. 코드는 `_old/웹버전(파이썬·Vercel)/app/` 에 있습니다. 다시 필요하면 그 폴더의 api 를 `app/` 로 되돌리고 앱에 Cloud 뷰를 복원하면 됩니다.
