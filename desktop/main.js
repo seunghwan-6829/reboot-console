@@ -7,7 +7,7 @@
    설정(userData/config.json) → 포터블 EXE 위치 순으로 정한다.
    ═══════════════════════════════════════════════════════ */
 "use strict";
-const { app, BrowserWindow, dialog, shell, nativeImage, Menu, clipboard } = require("electron");
+const { app, BrowserWindow, dialog, shell, nativeImage, Menu, clipboard, Tray, Notification } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -219,12 +219,44 @@ async function toolAction(q) {
 
 /* ── Claude Code 헤드리스 실행 (제작 · 검수 반영) ────────── */
 const PROMPTS = {
-  make: n => `${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, 특히 6-4 제품 무왜곡 TRACK A, 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. 제품 사진이 들어가는 타일은 원본을 재해석하지 말고 TRACK A(remove_background → upscale → PIL 합성)로 원본 픽셀을 보존한다(브리프의 photoMode 가 reinterpret 일 때만 예외). 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
-  revise: n => `${n} 검수 반영해줘. 먼저 README.md 의 규칙을 읽는다. ${n}/review.json 을 읽어라 — 타일마다 regions(이미지 기준 0~1 비율 x,y,w,h 와 코멘트) 와 note 가 있고, ${n}/review/NN_marked.png 에는 그 영역이 빨간 번호 박스로 표시돼 있다. 각 타일에 대해: 원본 tiles/NN.png 를 image_references 로 넣고 marked 이미지도 함께 참조해 '번호 영역만 코멘트대로 바꾸고 나머지는 전부 동일하게 유지'(MAKE EXACTLY N CHANGES) 방식으로 Higgsfield gpt_image_2_5 편집을 돌린다. 톤앤매너·팔레트·서체·제품 형태는 요청에 명시되지 않는 한 절대 바꾸지 않는다. 결과는 tiles/edits/NN_v{k}.png 에 저장하고 한 글자씩 대조한 뒤 원본을 tiles/NN.png 로 교체하기 전에 원본을 tiles/v_prev/ 에 백업한다. 끝나면 마지막 줄에 '완료: 수정 N장' 이라고 답한다.`
+  make: n => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: 준비|사진 분석|기획안|타일 생성|오타 검수|정리" 중 하나, 타일 한 장을 저장할 때마다 "▶ 타일: n/N 섹션이름". N 은 만들 총 타일 수.
+${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, 특히 6-4 제품 무왜곡 TRACK A, 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. 제품 사진이 들어가는 타일은 원본을 재해석하지 말고 TRACK A(remove_background → upscale → PIL 합성)로 원본 픽셀을 보존한다(브리프의 photoMode 가 reinterpret 일 때만 예외). 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
+  revise: n => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라: 단계가 바뀔 때마다 "▶ 단계: 준비|영역 확인|수정 생성|오타 검수|교체", 타일 한 장을 끝낼 때마다 "▶ 타일: n/N 섹션이름".
+${n} 검수 반영해줘. 먼저 README.md 의 규칙을 읽는다. ${n}/review.json 을 읽어라 — 타일마다 regions(이미지 기준 0~1 비율 x,y,w,h 와 코멘트) 와 note 가 있고, ${n}/review/NN_marked.png 에는 그 영역이 빨간 번호 박스로 표시돼 있다. 각 타일에 대해: 원본 tiles/NN.png 를 image_references 로 넣고 marked 이미지도 함께 참조해 '번호 영역만 코멘트대로 바꾸고 나머지는 전부 동일하게 유지'(MAKE EXACTLY N CHANGES) 방식으로 Higgsfield gpt_image_2_5 편집을 돌린다. 톤앤매너·팔레트·서체·제품 형태는 요청에 명시되지 않는 한 절대 바꾸지 않는다. 결과는 tiles/edits/NN_v{k}.png 에 저장하고 한 글자씩 대조한 뒤 원본을 tiles/NN.png 로 교체하기 전에 원본을 tiles/v_prev/ 에 백업한다. 끝나면 마지막 줄에 '완료: 수정 N장' 이라고 답한다.`
 };
+const STAGES = { make: ["준비", "사진 분석", "기획안", "타일 생성", "오타 검수", "정리"], revise: ["준비", "영역 확인", "수정 생성", "오타 검수", "교체"], custom: ["준비", "작업", "정리"] };
 const RUN = {
   proc: null, name: "", mode: "", lines: [], startedAt: 0, done: false, exit: null,
-  summary() { return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt }; },
+  stage: "", stageIdx: -1, tileDone: 0, tileTotal: 0, tileName: "", last: "",
+  stages() { return STAGES[this.mode] || STAGES.custom; },
+  pct() {
+    const st = this.stages(); if (this.done && this.exit === 0) return 100;
+    if (this.stageIdx < 0) return 2;
+    const mainIdx = st.indexOf(this.mode === "revise" ? "수정 생성" : "타일 생성");
+    // 생성 단계가 가장 길다: 앞 단계 25%, 생성 60%, 뒤 단계 15%
+    if (this.stageIdx < mainIdx) return Math.round(4 + 21 * (this.stageIdx + 1) / Math.max(1, mainIdx));
+    if (this.stageIdx === mainIdx) return Math.round(25 + 60 * (this.tileTotal ? Math.min(1, this.tileDone / this.tileTotal) : 0.15));
+    return Math.round(85 + 15 * (this.stageIdx - mainIdx) / Math.max(1, st.length - 1 - mainIdx));
+  },
+  summary() { return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt,
+    stages: this.stages(), stage: this.stage, stageIdx: this.stageIdx, tileDone: this.tileDone, tileTotal: this.tileTotal, tileName: this.tileName, pct: this.pct(), last: this.last }; },
+  setStage(name) { const st = this.stages(); const i = st.indexOf(name); if (i >= 0 && i >= this.stageIdx) { this.stageIdx = i; this.stage = name; } },
+  /* 텍스트 마커(▶ 단계 / ▶ 타일) 우선, 없으면 도구 호출로 추정 */
+  track(kind, text) {
+    if (kind === "ai") {
+      let m; const re1 = /▶\s*단계\s*[:：]\s*([^\n]+)/g; while ((m = re1.exec(text))) this.setStage(m[1].trim());
+      const re2 = /▶\s*타일\s*[:：]\s*(\d+)\s*\/\s*(\d+)\s*([^\n]*)/g; while ((m = re2.exec(text))) { this.tileDone = +m[1]; this.tileTotal = +m[2]; this.tileName = m[3].trim(); this.setStage(this.mode === "revise" ? "수정 생성" : "타일 생성"); }
+      const plain = text.replace(/▶[^\n]*/g, "").trim(); if (plain) this.last = plain.slice(0, 140);
+    } else if (kind === "tool") {
+      const t = text;
+      if (this.stageIdx < 0) this.setStage("준비");
+      if (/^Read — .*\.(png|jpe?g|webp)/i.test(t) && this.mode === "make") this.setStage("사진 분석");
+      if (/기획안/.test(t) && /^(Write|Edit)/.test(t)) this.setStage("기획안");
+      if (/^mcp__higgsfield/.test(t)) this.setStage(this.mode === "revise" ? "수정 생성" : "타일 생성");
+      if (/manifest\.json/.test(t) && /^(Write|Edit)/.test(t)) this.setStage("정리");
+      this.last = t.slice(0, 140);
+    }
+  },
   push(kind, text) { this.lines.push({ t: Date.now(), kind, text: String(text).slice(0, 4000) }); if (this.lines.length > 2000) this.lines.splice(0, this.lines.length - 2000); },
   start(name, mode, custom) {
     if (this.proc && this.exit == null) return { ok: false, error: "이미 실행 중입니다" };
@@ -232,6 +264,7 @@ const RUN = {
     const prompt = custom || (PROMPTS[mode] ? PROMPTS[mode](name) : null);
     if (!prompt) return { ok: false, error: "모르는 모드" };
     this.name = name; this.mode = mode; this.lines = []; this.done = false; this.exit = null; this.startedAt = Date.now();
+    this.stage = ""; this.stageIdx = -1; this.tileDone = 0; this.tileTotal = 0; this.tileName = ""; this.last = "";
     // 프롬프트는 stdin 으로 — 한글·공백이 든 인자를 cmd.exe 가 쪼개 버린다(첫 단어만 전달되는 사고)
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Bash", "mcp__higgsfield", "WebFetch"];
@@ -245,15 +278,15 @@ const RUN = {
     p.stdout.on("data", d => { buf += d.toString("utf8"); let i; while ((i = buf.indexOf("\n")) >= 0) { const ln = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (ln) this.ingest(ln); } });
     p.stderr.on("data", d => { const s = d.toString("utf8").trim(); if (s) this.push("err", s); });
     p.on("error", e => { this.push("err", "실행 오류: " + e.message); this.exit = -1; this.done = true; });
-    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); if (UPD.state === "downloaded-wait") { UPD.state = "downloaded"; setTimeout(() => UPD.tryInstall(), 15000); } });
+    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; if (code === 0) this.stageIdx = this.stages().length - 1; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); onRunFinished(code); if (UPD.state === "downloaded-wait") { UPD.state = "downloaded"; setTimeout(() => UPD.tryInstall(), 15000); } });
     return { ok: true, message: "시작했습니다" };
   },
   ingest(ln) {
     let j; try { j = JSON.parse(ln); } catch (e) { return this.push("raw", ln); }
     if (j.type === "assistant" && j.message && Array.isArray(j.message.content)) {
       for (const c of j.message.content) {
-        if (c.type === "text" && c.text && c.text.trim()) this.push("ai", c.text.trim());
-        else if (c.type === "tool_use") { const inp = c.input || {}; const brief = inp.description || inp.file_path || inp.command || inp.prompt || inp.pattern || ""; this.push("tool", c.name + (brief ? " — " + String(brief).slice(0, 160) : "")); }
+        if (c.type === "text" && c.text && c.text.trim()) { this.push("ai", c.text.trim()); this.track("ai", c.text); }
+        else if (c.type === "tool_use") { const inp = c.input || {}; const brief = inp.description || inp.file_path || inp.command || inp.prompt || inp.pattern || ""; const line = c.name + (brief ? " — " + String(brief).slice(0, 160) : ""); this.push("tool", line); this.track("tool", line); }
       }
     } else if (j.type === "result") {
       this.push("sys", (j.is_error ? "오류로 끝남" : "완료") + (j.total_cost_usd != null ? ` · $${(+j.total_cost_usd).toFixed(3)}` : "") + (j.num_turns ? ` · ${j.num_turns}턴` : ""));
@@ -452,6 +485,23 @@ function startServer() {
   });
 }
 
+/* ── 트레이 (작업 중 창을 닫으면 백그라운드 유지) ─────── */
+let tray = null, hiddenForRun = false;
+function trayIcon() { try { return nativeImage.createFromPath(path.join(APP_DIR, "assets", "icon-32.png")); } catch (e) { return nativeImage.createEmpty(); } }
+function toTray() {
+  if (!tray) { tray = new Tray(trayIcon()); tray.setContextMenu(Menu.buildFromTemplate([{ label: "콘솔 열기", click: () => restoreWin() }, { type: "separator" }, { label: "AI 작업 중단하고 종료", click: () => { RUN.stop(); setTimeout(() => app.exit(0), 800); } }])); tray.on("click", () => restoreWin()); }
+  tray.setToolTip("re:boot 콘솔 — AI 작업 중 (클릭해서 열기)");
+  hiddenForRun = true; if (win) win.hide();
+}
+function restoreWin() { hiddenForRun = false; if (win) { win.show(); win.focus(); } else createWindow(); if (tray) { tray.destroy(); tray = null; } }
+const SMOKE = process.argv.includes("--smoke");
+function onRunFinished(code) {
+  if (SMOKE) return;                                                       // 검증 인스턴스는 알림·창 조작 없음
+  const away = hiddenForRun || !win || !win.isFocused();                  // 콘솔을 보고 있으면 굳이 OS 알림까지 안 띄움
+  try { if (away && Notification.isSupported()) new Notification({ title: code === 0 ? "re:boot — AI 작업 완료" : "re:boot — AI 작업 종료", body: `${RUN.name} · ${code === 0 ? "검수 화면으로 이동합니다" : "종료 코드 " + code}`, icon: trayIcon() }).show(); } catch (e) {}
+  if (hiddenForRun) restoreWin(); else if (win) { win.flashFrame(true); }
+}
+
 /* ── 창 ─────────────────────────────────────────────── */
 async function ensureRoot() {
   ROOT = resolveRoot();
@@ -475,12 +525,13 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   win.once("ready-to-show", () => { win.show(); if (st.max) win.maximize(); });
   const save = () => { if (!win) return; const b = win.getNormalBounds(); writeCfg(Object.assign(readCfg(), { win: { x: b.x, y: b.y, w: b.width, h: b.height, max: win.isMaximized() } })); };
-  win.on("close", e => { save(); if (UPD.installing) return; if (RUN.proc && RUN.exit == null) { const r = dialog.showMessageBoxSync(win, { type: "warning", buttons: ["계속 실행", "중단하고 닫기"], defaultId: 0, cancelId: 0, message: "AI 작업이 아직 진행 중입니다", detail: "창을 닫으면 제작이 중단됩니다." }); if (r === 0) { e.preventDefault(); return; } RUN.stop(); } });
+  win.on("close", e => { save(); if (UPD.installing) return; if (RUN.proc && RUN.exit == null) { e.preventDefault(); toTray(); } });
   win.on("closed", () => { win = null; });
   win.loadURL(`http://127.0.0.1:${PORT}/app/`);
 }
 
-if (process.argv.includes("--smoke")) app.setPath("userData", path.join(os.tmpdir(), "reboot-smoke-data"));   // 검증용: 실행 중인 콘솔과 잠금·설정 분리
+if (process.argv.includes("--smoke")) app.setPath("userData", path.join(os.tmpdir(), "reboot-smoke-data"));
+app.setAppUserModelId("kr.rebootdesign.console");   // 알림에 electron.app.Electron 대신 앱 이름   // 검증용: 실행 중인 콘솔과 잠금·설정 분리
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
@@ -495,5 +546,5 @@ else {
     }
     createWindow();
   });
-  app.on("window-all-closed", () => app.quit());
+  app.on("window-all-closed", () => { if (!hiddenForRun) app.quit(); });
 }

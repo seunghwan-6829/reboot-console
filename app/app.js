@@ -263,7 +263,7 @@ const FS = {
       let name = f.name && isImg(f.name) ? f.name : `붙여넣기_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.${(f.type || "image/png").split("/")[1].replace("jpeg", "jpg")}`;
       try { await Local.addPhoto(this.name, name, f); n++; } catch (e) { UI.toast(`${name}: ${e.message}`, "w"); }
     }
-    if (n) { await this.load(this.name, true); UI.toast(`사진 ${n}장 추가 · 분석 완료`, "o"); Local._projects = null; Suggest.auto(); }
+    if (n) { await this.load(this.name, true); UI.toast(`사진 ${n}장 추가 — 다 올리셨으면 [분석 후 적용]`, "o"); Local._projects = null; }
     return n;
   },
   async removePhoto(file) {
@@ -630,7 +630,7 @@ const Brief = { title: "브리프", render(v) {
   v.addEventListener("dragover", e => { if (e.dataTransfer && Array.prototype.some.call(e.dataTransfer.types || [], t => t === "Files")) { e.preventDefault(); v.classList.add("dropping"); } });
   v.addEventListener("dragleave", e => { if (!v.contains(e.relatedTarget)) v.classList.remove("dropping"); });
   v.addEventListener("drop", async e => { v.classList.remove("dropping"); if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); if (await FS.addPhotos(e.dataTransfer.files)) { go("brief"); setTimeout(() => openCard("photos", true), 60); } });
-  const first = FS.analysis.length ? (SECTIONS.find(x => x.id !== "photos" && !App.secDone(x.id)) || SECTIONS[1]) : SECTIONS[0];
+  const first = !FS.analysis.length ? SECTIONS[0] : (App.curSec && SECTIONS.find(x => x.id === App.curSec)) || SECTIONS[1];
   openCard(first.id, true);
 }};
 /* 클립보드 붙여넣기 → 사진.
@@ -643,7 +643,7 @@ async function pasteFromClipboard() {
   try {
     const j = await Local.pasteClip(FS.name);
     await FS.load(FS.name, true); Local._projects = null;
-    UI.toast(`붙여넣기 ${j.files.length}장 추가${j.w ? ` (${j.w}×${j.h})` : ""} · 분석 완료`, "o"); Suggest.auto();
+    UI.toast(`붙여넣기 ${j.files.length}장 추가${j.w ? ` (${j.w}×${j.h})` : ""} — 다 올리셨으면 [분석 후 적용]`, "o");
     if (App.view !== "brief") go("brief"); else go("brief"); setTimeout(() => openCard("photos", true), 60);
   } catch (e) { UI.toast(/이미지가 없습니다/.test(e.message) ? "클립보드에 이미지가 없습니다 — 캡처하거나 파일을 복사한 뒤 Ctrl+V" : "붙여넣기 실패: " + e.message, "w"); }
   finally { pasteBusy = false; }
@@ -981,12 +981,12 @@ const Suggest = {
     if (!Local.desktop) return `<p class="hint" style="margin:10px 0 12px">EXE 에서는 AI 가 사진을 직접 보고 예시문을 씁니다.</p>`;
     if (this.running) return `<div class="note i">${svg("sparkles")}<div class="nb"><b>AI 가 사진을 보는 중…</b> 20~40초. 보고 나면 아래 칸들의 예시문이 이 상품에 맞게 바뀝니다.</div></div>`;
     if (this.err) return `<div class="note w">${svg("warn")}<div class="nb">${esc(this.err)} <button class="btn sm" data-sug="run" style="margin-left:6px">다시</button></div></div>`;
-    if (g) return `<div class="note o">${svg("check")}<div class="nb"><b>AI 가 본 사진:</b> ${esc(g.photo || "")}<br><span class="hint">예시문(Tab)이 이 상품 기준으로 바뀌었습니다${g.cost ? ` · $${(+g.cost).toFixed(2)}` : ""}</span>
-      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm pri" data-sug="fill">${svg("edit")} 빈 칸에 제안 채우기</button><button class="btn sm ghost" data-sug="run">${svg("refresh")} 다시 보기</button></div></div></div>`;
-    return `<div class="note b">${svg("sparkles")}<div class="nb"><b>사진을 AI 에게 보여주고 예시문 받기</b> — 누가 사나·스펙·차별점·분위기를 이 상품 기준으로 제안합니다.<div style="margin-top:8px"><button class="btn sm pri" data-sug="run">${svg("sparkles")} 사진 보고 예시문 쓰기</button></div></div></div>`;
+    const stale = g && FS.analysis.length && g.photos && g.photos.length !== FS.analysis.length;
+    if (g && !stale) return `<div class="note o">${svg("check")}<div class="nb"><b>AI 가 본 사진:</b> ${esc(g.photo || "")}<br><span class="hint">브리프 빈 칸을 이 상품 기준으로 채웠습니다${g.cost ? ` · $${(+g.cost).toFixed(2)}` : ""}. 사실과 다르면 고쳐주세요.</span>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" data-sug="fill">${svg("edit")} 빈 칸 다시 채우기</button><button class="btn sm ghost" data-sug="run">${svg("refresh")} 다시 분석</button></div></div></div>`;
+    return `<div class="note b">${svg("sparkles")}<div class="nb"><b>사진을 다 올렸으면 → 분석 후 적용</b> — AI 가 사진 ${FS.analysis.length}장을 보고 상품명·누가 사나·스펙·차별점·분위기를 채웁니다 (20~40초).${stale ? " <span class='hint'>사진이 바뀌어 다시 분석이 필요합니다.</span>" : ""}<div style="margin-top:8px"><button class="btn sm pri" data-sug="run">${svg("sparkles")} 분석 후 적용</button></div></div></div>`;
   },
   paint() { const b = $("#aisug"); if (b) b.innerHTML = this.box(); },
-  async auto() { if (!Local.desktop || this.running || !FS.name) return; const rd = await aiReady(); if (!rd.ok && !rd.running) return; this.run(); },
   async run() {
     if (!Local.desktop || !FS.name) return; if (this.running) return UI.toast("이미 보는 중입니다");
     const pr = App.brief.product || {};
@@ -998,54 +998,78 @@ const Suggest = {
       if (st.running) return;
       clearInterval(this.timer); this.running = false;
       if (st.error) { this.err = st.error; this.paint(); UI.toast("예시문 제안 실패", "w"); return; }
-      if (st.data && st.name === FS.name) { App.suggest = st.data; this.paint(); rerenderExamples(); refreshCardMeta(); UI.toast("사진 기준 예시문을 적용했습니다 — Tab 으로 채우거나 '빈 칸에 제안 채우기'", "o"); }
+      if (st.data && st.name === FS.name) { App.suggest = st.data; this.paint(); rerenderExamples(); refreshCardMeta(); this.fill(true); }
     }, 2500);
   },
-  fill() {
+  fill(auto) {
     const g = App.suggest; if (!g) return;
     const put = (sec, k, v) => { if (!v) return 0; App.brief[sec] = App.brief[sec] || {}; if (String(App.brief[sec][k] || "").trim()) return 0; App.brief[sec][k] = v; const f = $(`[data-k="${sec}.${k}"]`); if (f) f.value = v; return 1; };
     let n = put("product", "name", g.name) + put("target", "who", g.who) + put("fact", "specs", g.specs) + put("fact", "usp", g.usp) + put("req", "mood", g.mood) + put("req", "avoid", g.avoid);
     if (Array.isArray(g.sections) && g.sections.length) { const cur = new Set(layoutSel()); g.sections.forEach(id => { if (catOf(id)) cur.add(id); }); App.brief.layout = { sections: CATALOG.filter(c => cur.has(c.id)).map(c => c.id) }; }
     App.saveBrief(); refreshCardMeta(); bumpProgress(); ACT.saveBrief(true);
-    UI.toast(n ? `빈 칸 ${n}개를 제안으로 채웠습니다 — 사실과 다르면 고쳐주세요` : "빈 칸이 없습니다", n ? "o" : "w");
-    if (n) { go("brief"); setTimeout(() => openCard("target", true), 60); }
+    UI.toast(n ? `분석 완료 — 빈 칸 ${n}개를 채웠습니다. 사실과 다르면 고쳐주세요` : (auto ? "분석 완료 — 이미 채워진 칸은 그대로 뒀습니다" : "빈 칸이 없습니다"), n ? "o" : "w");
+    go("brief"); setTimeout(() => openCard("product", true), 60);      // 분석 뒤엔 항상 1단계 상품부터 확인
   },
   act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); }
 };
 
-/* ── AI 실행 패널 (EXE: Claude Code 헤드리스) ── */
+/* ── AI 실행 패널: 단계 워드 스와이프 + 눈금 진행바 + 전체 % ── */
 const RunUI = {
-  el: null, timer: null, next: 0, open: false, min: false,
+  el: null, timer: null, next: 0, open: false, min: false, logOpen: false, lastStage: -1, lastKey: "",
   ensure() {
     if (this.el) return this.el;
-    this.el = el("div", "runp", `<div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기">${svg("x")}</button></div>
-      <div class="rl" id="runL"></div>
-      <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm pri" id="runReload" hidden>${svg("refresh")} 타일 새로고침</button></div>`);
+    this.el = el("div", "runp", `
+      <div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rel" id="runEl"></span><button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기">${svg("x")}</button></div>
+      <div class="rbody">
+        <div class="rstage"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rpct"><b id="runPct">0</b><i>%</i></div></div>
+        <div class="rticks" id="runTicks"></div>
+        <div class="rchips" id="runChips"></div>
+        <div class="rlast" id="runLast">시작하는 중…</div>
+      </div>
+      <div class="rl" id="runL" hidden></div>
+      <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>`);
     document.body.appendChild(this.el);
+    const T = $("#runTicks", this.el); for (let i = 0; i < 44; i++) T.appendChild(el("i"));
     $("#runMin", this.el).onclick = () => { this.min = !this.min; this.el.classList.toggle("min", this.min); };
+    $("#runLog", this.el).onclick = () => { this.logOpen = !this.logOpen; $("#runL", this.el).hidden = !this.logOpen; this.el.classList.toggle("logon", this.logOpen); };
     $("#runX", this.el).onclick = () => this.hide();
     $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(); } catch (e) { UI.toast(e.message, "w"); } };
-    $("#runReload", this.el).onclick = () => this.reload();
+    $("#runGo", this.el).onclick = () => { this.hide(); go("review"); };
     return this.el;
   },
-  show(title) { this.ensure(); this.open = true; this.min = false; this.el.classList.add("on"); this.el.classList.remove("min", "done", "fail"); $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runReload", this.el).hidden = true; $("#runStop", this.el).hidden = false; this.next = 0; this.poll(); },
+  show(title) { this.ensure(); this.open = true; this.min = false; this.lastStage = -1; this.lastKey = ""; this.el.classList.add("on"); this.el.classList.remove("min", "done", "fail"); $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…"; this.next = 0; this.poll(); },
   hide() { this.open = false; if (this.el) this.el.classList.remove("on"); clearInterval(this.timer); this.timer = null; },
+  paint(j) {
+    const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100);
+    const word = j.done ? (j.exit === 0 ? "완료" : "중단됨") : (idx >= 0 ? st[idx] : "준비");
+    const W = $("#runWord", this.el);
+    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); sw.appendChild(nw); setTimeout(() => { W.remove(); nw.classList.remove("in"); nw.id = "runWord"; }, 380); }
+    $("#runPct", this.el).textContent = pct;
+    const ticks = $$("#runTicks i", this.el), n = Math.round(ticks.length * pct / 100);
+    ticks.forEach((t, k) => { t.classList.toggle("on", k < n); t.classList.toggle("cur", k === n - 1); });
+    $("#runChips", this.el).innerHTML = st.map((nm, k) => `<span class="${k < idx || (j.done && j.exit === 0) ? "past" : k === idx ? "cur" : ""}">${k < idx || (j.done && j.exit === 0) ? svg("check") : ""}${esc(nm)}</span>`).join("");
+    const gen = j.tileTotal ? `타일 ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
+    $("#runLast", this.el).innerHTML = j.done ? (j.exit === 0 ? "다 만들었습니다. 검수 화면으로 이동합니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
+    const m = Math.round((Date.now() - j.startedAt) / 60000); $("#runEl", this.el).textContent = j.running ? `${m}분` : "";
+  },
   async poll() {
     clearInterval(this.timer);
     const tick = async () => {
       let j; try { j = await Local.runStatus(this.next); } catch (e) { return; }
       const L = $("#runL", this.el);
       (j.lines || []).forEach(ln => { const d = el("div", "ln " + ln.kind, `<i>${new Date(ln.t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</i><span>${esc(ln.text)}</span>`); L.appendChild(d); });
-      if ((j.lines || []).length) L.scrollTop = L.scrollHeight;
+      if ((j.lines || []).length && this.logOpen) L.scrollTop = L.scrollHeight;
       this.next = j.next || this.next;
+      this.paint(j);
       const el2 = $("#runS", this.el);
-      if (j.running) el2.textContent = `실행 중 · ${Math.round((Date.now() - j.startedAt) / 60000)}분`;
-      else if (j.done) { clearInterval(this.timer); this.timer = null; el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runStop", this.el).hidden = true; $("#runReload", this.el).hidden = false; UI.toast(j.exit === 0 ? "AI 작업이 끝났습니다" : "AI 작업이 종료됐습니다", j.exit === 0 ? "o" : "w"); if (j.exit === 0) this.reload(); }
+      if (j.running) el2.textContent = "실행 중 — 창을 닫아도 계속 돕니다";
+      else if (j.done) { clearInterval(this.timer); this.timer = null; el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runStop", this.el).hidden = true; $("#runGo", this.el).hidden = j.exit !== 0;
+        if (j.exit === 0) { UI.toast("AI 작업 완료 — 검수 화면으로 이동합니다", "o"); await this.reload(); setTimeout(() => { this.hide(); App.curTile = null; go("review"); }, 900); } else { UI.toast("AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); } }
       else el2.textContent = "";
     };
     await tick(); this.timer = setInterval(tick, 1500);
   },
-  async reload() { if (!FS.name) return; await FS.load(FS.name, true); Local._projects = null; if (["tiles", "review", "home"].includes(App.view)) go(App.view); else renderSide(); }
+  async reload() { if (!FS.name) return; await FS.load(FS.name, true); Local._projects = null; renderSide(); }
 };
 
 /* ── 연결 섹션 (설정 안) ── */

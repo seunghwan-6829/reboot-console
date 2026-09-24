@@ -474,26 +474,48 @@ code{background:var(--sunk);border-radius:4px;padding:1px 5px;font-size:12.5px;f
 .sitem.tile.ov-b{box-shadow:inset 0 -2px 0 var(--brand)}
 .sitem .cnt.rq{background:var(--warn-bg);color:var(--warn);font-weight:700;padding:0 6px;border-radius:8px}
 
-/* ── AI 실행 패널 ───────────────────── */
-.runp{position:fixed;right:18px;bottom:18px;width:460px;max-width:calc(100vw - 100px);height:340px;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-xl);box-shadow:var(--sh-3);display:none;flex-direction:column;z-index:180;overflow:hidden;animation:popin .2s var(--ease)}
+/* ── AI 실행 패널 (단계 워드 · 눈금 진행바) ── */
+.runp{position:fixed;right:18px;bottom:18px;width:480px;max-width:calc(100vw - 100px);background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-xl);box-shadow:var(--sh-3);display:none;flex-direction:column;z-index:180;overflow:hidden;animation:popin .2s var(--ease)}
 .runp.on{display:flex}
-.runp.min{height:auto}
-.runp.min .rl,.runp.min .rf{display:none}
+.runp.min .rbody,.runp.min .rl,.runp.min .rf{display:none}
 .runp .rh{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--side)}
 .runp.min .rh{border-bottom:0}
 .runp .rh b{font-size:13.5px}
 .runp .rh .sp{flex:1}
+.runp .rel{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .rdot{width:9px;height:9px;border-radius:50%;background:var(--brand);animation:pulse 1.6s infinite;flex:none}
 .runp.done .rdot{background:var(--ok);animation:none}.runp.fail .rdot{background:var(--danger);animation:none}
 .ib{border:0;background:transparent;width:26px;height:26px;border-radius:6px;color:var(--ink-3);display:flex;align-items:center;justify-content:center}
 .ib:hover{background:var(--hover);color:var(--ink)}
 .ib svg{width:14px;height:14px}
-.runp .rl{flex:1;overflow-y:auto;padding:8px 10px;font-size:12.5px;line-height:1.5;font-family:ui-monospace,Consolas,"Pretendard",monospace}
+.runp .rbody{padding:16px 18px 12px}
+.rstage{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}
+.rsw{position:relative;height:38px;flex:1;overflow:hidden}
+.rsword{position:absolute;left:0;top:0;font-size:28px;font-weight:800;letter-spacing:-.03em;line-height:38px;transition:transform .38s var(--ease),opacity .38s var(--ease);white-space:nowrap}
+.rsword.in{transform:translateX(60px);opacity:0;animation:rsin .38s var(--ease) forwards}
+.rsword.out{transform:translateX(-60px);opacity:0}
+@keyframes rsin{to{transform:none;opacity:1}}
+.rpct{display:flex;align-items:baseline;gap:2px;color:var(--brand);font-variant-numeric:tabular-nums}
+.rpct b{font-size:30px;font-weight:800;letter-spacing:-.03em;line-height:1}
+.rpct i{font-style:normal;font-size:13px;font-weight:700}
+.rticks{display:flex;gap:4px;align-items:center;height:26px;padding:0 2px;margin-bottom:12px}
+.rticks i{flex:1;height:12px;border-radius:2px;background:var(--line-2);transition:background .25s,height .25s,transform .25s}
+.rticks i.on{background:var(--brand);height:22px}
+.rticks i.cur{background:var(--brand-ink);transform:scaleX(1.6);box-shadow:0 0 0 3px var(--brand-soft)}
+.runp.done .rticks i.on{background:var(--ok)}.runp.done .rticks i.cur{background:var(--ok);box-shadow:none}
+.rchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.rchips span{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:12px;background:var(--sunk);color:var(--ink-3);transition:.2s}
+.rchips span svg{width:11px;height:11px;stroke-width:3}
+.rchips span.past{background:var(--ok-bg);color:var(--ok)}
+.rchips span.cur{background:var(--brand);color:#fff;animation:pulse 1.8s infinite}
+.rlast{font-size:12.5px;color:var(--ink-2);line-height:1.5;min-height:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rlast b{color:var(--ink)}
+.runp .rl{max-height:200px;overflow-y:auto;padding:8px 10px;font-size:12px;line-height:1.5;font-family:ui-monospace,Consolas,"Pretendard",monospace;border-top:1px solid var(--line);background:var(--sunk)}
 .runp .ln{display:flex;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}
 .runp .ln i{font-style:normal;color:var(--ink-3);flex:none;font-size:11px;padding-top:2px}
 .runp .ln span{white-space:pre-wrap;word-break:break-word;min-width:0}
 .runp .ln.ai span{color:var(--ink)}.runp .ln.tool span{color:var(--info)}.runp .ln.sys span{color:var(--ink-2);font-weight:600}.runp .ln.err span{color:var(--danger)}.runp .ln.raw span{color:var(--ink-3)}
-.runp .rf{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
+.runp .rf{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
 .runp .rf .sp{flex:1}
 
 /* ── 사진 드롭존 · 삭제 ─────────────── */
