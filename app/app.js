@@ -197,9 +197,10 @@ const Local = {
   /* EXE 전용 */
   tools() { return this._j("/local/tools"); },
   toolAct(action, extra) { return this._j("/local/tools?" + new URLSearchParams(Object.assign({ do: action }, extra || {})), { method: "POST" }); },
-  run(name, mode, prompt) { return this._j("/local/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, mode, prompt: prompt || "" }) }); },
-  runStatus(since) { return this._j("/local/run?since=" + (since || 0)); },
-  runStop() { return this._j("/local/run?do=stop", { method: "POST" }); },
+  run(name, mode, prompt, photoMode) { return this._j("/local/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, mode, prompt: prompt || "", photoMode: photoMode || "" }) }); },
+  runStatus(name, since) { return this._j(`/local/run?name=${encodeURIComponent(name)}&since=${since || 0}`); },
+  runsAll() { return this._j("/local/run"); },
+  runStop(name) { return this._j(`/local/run?do=stop&name=${encodeURIComponent(name)}`, { method: "POST" }); },
   update() { return this._j("/local/update"); },
   updateAct(what) { return this._j("/local/update?do=" + what, { method: "POST" }); }
 };
@@ -298,7 +299,8 @@ const FS = {
 const CATS = ["패션/잡화", "식품", "뷰티/화장품", "디지털/가전", "생활/리빙", "서비스/강의", "기타"];
 const CHANNELS = ["스마트스토어", "쿠팡", "자사몰(D2C)", "기타"];
 const CERTS = ["HACCP", "KC인증", "특허", "시험성적서", "유기농/친환경", "피부자극테스트", "없음"];
-const PHOTO_MODES = [["keep", "원본 그대로 합성 (권장)"], ["reinterpret", "AI 재해석 허용"]];
+const PHOTO_MODES = [["regen", "AI 고화질 재현 (권장)"], ["keep", "원본 그대로 합성"]];
+const photoModeOf = () => { const m = (App.brief.req || {}).photoMode; return m === "keep" ? "keep" : "regen"; };
 const EG = {
   "식품": { name: "저온착즙 사과주스 1L", price: "29,900원 · 1L x 6병", who: "초등 자녀 둔 30대 엄마. 하원 후 오후 간식 주는데 시판 주스는 당이 너무 높아서 고민.", specs: "저온 착즙 공법\n사과 함량 100%, 물·설탕·농축액 무첨가\n유리병 1L\n냉장 보관, 개봉 후 3일", usp: "시중 제품은 대부분 농축액 환원인데 우리는 착즙 원액 100%" },
   "디지털/가전": { name: "무선 에어건 청소기", price: "89,000원 · 본체 + 노즐 3종", who: "차량 관리에 진심인 30~40대 남성. 세차장 에어건 쓰려고 매번 나가는 게 번거로움.", specs: "풍속 최대 52m/s\n배터리 6000mAh, 연속 20분\n무게 780g\n노즐 3종 (일자·납작·브러시)", usp: "같은 가격대는 대부분 30m/s대인데 52m/s" },
@@ -382,7 +384,7 @@ const App = {
     if (id === "fact") return (b.specs || "").trim() ? (b.specs.split("\n").filter(Boolean).length + "개 항목" + (b.usp ? " · USP 있음" : "")) : "미작성";
     if (id === "proof") return [b.numbers, (b.certs || []).join("·"), (b.reviews || "").trim() ? "리뷰 있음" : ""].filter(Boolean).join(" · ") || "미작성";
     if (id === "terms") return (b.all || "").split("\n")[0].slice(0, 46) || "미작성";
-    if (id === "req") return [b.photoMode === "reinterpret" ? "AI 재해석" : b.photoMode ? "원본 합성" : "", b.mood, b.avoid].filter(Boolean).join(" / ").slice(0, 46) || "미작성";
+    if (id === "req") return [b.photoMode === "keep" ? "원본 합성" : b.photoMode ? "AI 고화질 재현" : "", b.mood, b.avoid].filter(Boolean).join(" / ").slice(0, 46) || "미작성";
     if (id === "layout") { const sel = layoutSel(), ex = sel.filter(x => !catOf(x).def).map(x => catOf(x).label), off = CATALOG.filter(c => c.def && !sel.includes(c.id)).map(c => c.label);
       return `${sel.length}개 섹션` + (ex.length ? " · +" + ex.join(", ") : "") + (off.length ? " · −" + off.join(", ") : ""); }
     return "미작성";
@@ -558,9 +560,10 @@ const fmtAgo = t => { if (!t) return ""; const s = Date.now() / 1000 - t; if (s 
 const Projects = { title: "프로젝트", async render(v) {
   if (!Local.ok) { v.innerHTML = `<div class="wrap"><h1 class="pg">프로젝트</h1><div class="note w">${svg("warn")}<div class="nb"><b>re-boot 콘솔.exe</b> 로 실행해야 합니다.</div></div></div>`; return; }
   v.innerHTML = `<div class="wrap wide"><div class="empty"><div class="eic">${svg("folder")}</div><b>불러오는 중…</b></div></div>`;
-  let list = []; try { list = await Local.projects(true); } catch (e) {}
+  let list = [], runs = []; try { list = await Local.projects(true); if (Local.desktop) runs = (await Local.runsAll()).runs || []; } catch (e) {}
   if (App.view !== "projects") return;
-  const stage = p => p.tiles ? (p.exports ? ["전달", "s-approved"] : ["검수", "s-extend"]) : p.hasOrder ? ["제작 대기", "s-edit"] : p.hasBrief ? ["브리프", "s-hold"] : ["사진", "s-hold"];
+  const busy = n => runs.find(r => r.name === n && r.running);
+  const stage = p => busy(p.name) ? ["AI 제작 중 " + (busy(p.name).pct || 0) + "%", "s-extend"] : p.tiles ? (p.exports ? ["전달", "s-approved"] : ["검수", "s-extend"]) : p.hasOrder ? ["제작 대기", "s-edit"] : p.hasBrief ? ["브리프", "s-hold"] : ["사진", "s-hold"];
   v.innerHTML = `<div class="wrap wide">
     <div class="vhead"><h1 class="pg">프로젝트 <span class="cntl">${list.length}</span></h1><div class="sp"></div>
       ${Local.desktop ? `<button class="btn" data-act="openRoot">${svg("ext")} 폴더 열기</button>` : ""}<button class="btn" data-act="newproj">${svg("plus")} 새 프로젝트</button></div>
@@ -712,8 +715,8 @@ const BODY = {
   terms: (g) => `<p class="hint">긴박감은 <b>진짜일 때만</b> 씁니다.</p>
     <div class="fld"><label>할인 · 한정 · 환불 · 배송</label><textarea data-k="terms.all" data-notab placeholder="형식) 할인 / 한정 수량·기간 / 환불·교환 / 배송 — 실제 조건만">${esc(g("terms", "all"))}</textarea></div>`,
   req: (g, eg, s) => `<p class="hint">${s ? `사진에서 뽑은 포인트 컬러는 <b>${s.accent}</b> 입니다. 비워두면 이 색으로 제안합니다.` : "비워두면 사진 분석 결과로 톤을 제안드립니다."}</p>
-    <div class="fld"><label>제품 사진 처리</label><p class="hint">권장은 <b>원본 그대로 합성</b> — 누끼·업스케일만 하고 AI가 제품을 다시 그리지 않습니다. 라벨·형태가 바뀌지 않습니다.</p>
-      <div class="chips" data-radio="req.photoMode">${PHOTO_MODES.map(([k, l]) => `<label class="chip"><input type="radio" name="pm" value="${k}"${(g("req", "photoMode") || "keep") === k ? " checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
+    <div class="fld"><label>제품 사진 처리</label><p class="hint"><b>AI 고화질 재현</b> — 원본을 참고해 로고·글자·형태는 그대로, 화질만 스튜디오급으로 다시 만듭니다(저화질 사진일 때 권장). <b>원본 그대로 합성</b> — 누끼·업스케일만 하고 픽셀을 보존합니다.</p>
+      <div class="chips" data-radio="req.photoMode">${PHOTO_MODES.map(([k, l]) => `<label class="chip"><input type="radio" name="pm" value="${k}"${(g("req", "photoMode") === "keep" ? "keep" : "regen") === k ? " checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
     <div class="row2"><div class="fld"><label>원하는 분위기</label><textarea data-k="req.mood" placeholder="${esc(eg.mood || "깨끗하고 자연광 느낌. 프리미엄하게.")}">${esc(g("req", "mood"))}</textarea></div>
       <div class="fld"><label>피하고 싶은 것</label><textarea data-k="req.avoid" placeholder="${esc(eg.avoid || "빨간 폭탄세일 느낌, 촌스러운 그라데이션")}">${esc(g("req", "avoid"))}</textarea></div></div>
     <div class="fld"><label>그 밖에 하고 싶은 말</label><textarea data-k="req.etc" placeholder="법적으로 못 쓰는 표현, 꼭 넣어야 할 고지, 참고 브랜드 등">${esc(g("req", "etc"))}</textarea></div>`,
@@ -1008,23 +1011,36 @@ const Suggest = {
     if (Array.isArray(g.sections) && g.sections.length) { const cur = new Set(layoutSel()); g.sections.forEach(id => { if (catOf(id)) cur.add(id); }); App.brief.layout = { sections: CATALOG.filter(c => cur.has(c.id)).map(c => c.id) }; }
     App.saveBrief(); refreshCardMeta(); bumpProgress(); ACT.saveBrief(true);
     UI.toast(n ? `분석 완료 — 빈 칸 ${n}개를 채웠습니다. 사실과 다르면 고쳐주세요` : (auto ? "분석 완료 — 이미 채워진 칸은 그대로 뒀습니다" : "빈 칸이 없습니다"), n ? "o" : "w");
+    if (auto) this.askPhotoMode();
     go("brief"); setTimeout(() => openCard("product", true), 60);      // 분석 뒤엔 항상 1단계 상품부터 확인
+  },
+  async askPhotoMode() {
+    const low = FS.summary ? FS.summary.low : 0, total = FS.analysis.length;
+    const v = await UI.dialog({ title: "제품 사진을 어떻게 쓸까요?", sub: `${total}장 중 ${low}장이 권장 해상도(${SET.minLong}px) 미만입니다.`, icon: "photo", tone: "b",
+      body: `<div class="pmpick">
+        <button class="pm" data-pm="regen"><b>AI 고화질 재현</b><small>원본을 참고해 <b>로고·글자·제품 형태는 그대로</b> 두고 화질만 스튜디오급으로 다시 만듭니다. 라벨에 없는 글자·인증은 추가하지 않습니다.</small><em>${low ? "권장 — 저화질 사진" : "고화질에도 사용 가능"}</em></button>
+        <button class="pm" data-pm="keep"><b>원본 그대로 합성</b><small>누끼·업스케일만 하고 픽셀을 보존합니다. 실물 사진이 이미 좋을 때.</small><em>${low ? "저화질이라 뭉개질 수 있음" : "권장 — 사진 상태 양호"}</em></button></div>`,
+      buttons: [{ label: "나중에 (6단계에서 변경)", value: 0 }], onOpen(d) { $$(".pm", d).forEach(b => b.onclick = () => UI._close(b.dataset.pm)); } });
+    if (v === "regen" || v === "keep") { App.brief.req = App.brief.req || {}; App.brief.req.photoMode = v; App.saveBrief(); refreshCardMeta(); UI.toast(v === "regen" ? "AI 고화질 재현으로 설정했습니다" : "원본 그대로 합성으로 설정했습니다", "o"); }
   },
   act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); }
 };
 
-/* ── AI 실행 패널: 단계 워드 스와이프 + 눈금 진행바 + 전체 % ── */
+/* ── AI 실행 패널: 프로젝트별 실행 · 단계 워드 스와이프 · 눈금 진행바 · 타일 스트립 ── */
+const FUN = { make: ["카피 문장을 고르는 중", "색 조합을 맞추는 중", "제품 사진을 다듬는 중", "여백을 계산하는 중", "글자 하나하나 검수하는 중", "섹션 순서를 정리하는 중", "고객이 멈출 지점을 만드는 중"], revise: ["표시한 영역을 확인하는 중", "톤을 그대로 유지하는 중", "고친 자리만 다시 그리는 중", "글자를 대조하는 중"] };
 const RunUI = {
-  el: null, timer: null, next: 0, open: false, min: false, logOpen: false, lastStage: -1, lastKey: "",
+  el: null, timer: null, next: 0, open: false, min: false, logOpen: false, lastKey: "", name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null,
   ensure() {
     if (this.el) return this.el;
     this.el = el("div", "runp", `
       <div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rel" id="runEl"></span><button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기">${svg("x")}</button></div>
       <div class="rbody">
         <div class="rstage"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rpct"><b id="runPct">0</b><i>%</i></div></div>
-        <div class="rticks" id="runTicks"></div>
+        <div class="rticks" id="runTicks"><span class="rshine"></span></div>
         <div class="rchips" id="runChips"></div>
+        <div class="rfun" id="runFun"></div>
         <div class="rlast" id="runLast">시작하는 중…</div>
+        <div class="rtiles" id="runTiles"></div>
       </div>
       <div class="rl" id="runL" hidden></div>
       <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>`);
@@ -1033,43 +1049,52 @@ const RunUI = {
     $("#runMin", this.el).onclick = () => { this.min = !this.min; this.el.classList.toggle("min", this.min); };
     $("#runLog", this.el).onclick = () => { this.logOpen = !this.logOpen; $("#runL", this.el).hidden = !this.logOpen; this.el.classList.toggle("logon", this.logOpen); };
     $("#runX", this.el).onclick = () => this.hide();
-    $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(); } catch (e) { UI.toast(e.message, "w"); } };
-    $("#runGo", this.el).onclick = () => { this.hide(); go("review"); };
+    $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(this.name); } catch (e) { UI.toast(e.message, "w"); } };
+    $("#runGo", this.el).onclick = async () => { this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); App.curTile = null; go("review"); };
     return this.el;
   },
-  show(title) { this.ensure(); this.open = true; this.min = false; this.lastStage = -1; this.lastKey = ""; this.el.classList.add("on"); this.el.classList.remove("min", "done", "fail"); $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…"; this.next = 0; this.poll(); },
-  hide() { this.open = false; if (this.el) this.el.classList.remove("on"); clearInterval(this.timer); this.timer = null; },
+  show(title, name, mode) {
+    this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.lastKey = ""; this.seen = new Set(); this.funI = 0;
+    this.el.classList.add("on", "live"); this.el.classList.remove("min", "done", "fail");
+    $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…";
+    this.next = 0; this.poll(); this.fun(); this.tiles();
+  },
+  hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null; },
+  fun() { clearInterval(this.funT); const list = FUN[this.mode] || FUN.make; const F = $("#runFun", this.el); const step = () => { const n = el("span", "in", esc(list[this.funI++ % list.length])); F.innerHTML = ""; F.appendChild(n); }; step(); this.funT = setInterval(step, 4200); },
+  /* 완성되는 타일을 8초마다 확인해 미니 스트립에 팝인 */
+  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); (p.tiles || []).filter(t => !/^_/.test(t.name)).forEach(t => { if (this.seen.has(t.name)) return; this.seen.add(t.name); const d = el("div", "rt", `<img src="${t.url}?v=${Date.now()}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); box.classList.toggle("has", box.children.length > 0); }; tick(); this.tileT = setInterval(tick, 8000); },
   paint(j) {
     const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100);
     const word = j.done ? (j.exit === 0 ? "완료" : "중단됨") : (idx >= 0 ? st[idx] : "준비");
     const W = $("#runWord", this.el);
     if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); sw.appendChild(nw); setTimeout(() => { W.remove(); nw.classList.remove("in"); nw.id = "runWord"; }, 380); }
-    $("#runPct", this.el).textContent = pct;
+    const P = $("#runPct", this.el); if (P.textContent !== String(pct)) { P.textContent = pct; P.classList.remove("bump"); void P.offsetWidth; P.classList.add("bump"); }
     const ticks = $$("#runTicks i", this.el), n = Math.round(ticks.length * pct / 100);
     ticks.forEach((t, k) => { t.classList.toggle("on", k < n); t.classList.toggle("cur", k === n - 1); });
     $("#runChips", this.el).innerHTML = st.map((nm, k) => `<span class="${k < idx || (j.done && j.exit === 0) ? "past" : k === idx ? "cur" : ""}">${k < idx || (j.done && j.exit === 0) ? svg("check") : ""}${esc(nm)}</span>`).join("");
     const gen = j.tileTotal ? `타일 ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
-    $("#runLast", this.el).innerHTML = j.done ? (j.exit === 0 ? "다 만들었습니다. 검수 화면으로 이동합니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
+    $("#runLast", this.el).innerHTML = j.done ? (j.exit === 0 ? "다 만들었습니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
     const m = Math.round((Date.now() - j.startedAt) / 60000); $("#runEl", this.el).textContent = j.running ? `${m}분` : "";
   },
   async poll() {
     clearInterval(this.timer);
     const tick = async () => {
-      let j; try { j = await Local.runStatus(this.next); } catch (e) { return; }
+      let j; try { j = await Local.runStatus(this.name, this.next); } catch (e) { return; }
       const L = $("#runL", this.el);
       (j.lines || []).forEach(ln => { const d = el("div", "ln " + ln.kind, `<i>${new Date(ln.t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</i><span>${esc(ln.text)}</span>`); L.appendChild(d); });
       if ((j.lines || []).length && this.logOpen) L.scrollTop = L.scrollHeight;
       this.next = j.next || this.next;
       this.paint(j);
       const el2 = $("#runS", this.el);
-      if (j.running) el2.textContent = "실행 중 — 창을 닫아도 계속 돕니다";
-      else if (j.done) { clearInterval(this.timer); this.timer = null; el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runStop", this.el).hidden = true; $("#runGo", this.el).hidden = j.exit !== 0;
-        if (j.exit === 0) { UI.toast("AI 작업 완료 — 검수 화면으로 이동합니다", "o"); await this.reload(); setTimeout(() => { this.hide(); App.curTile = null; go("review"); }, 900); } else { UI.toast("AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); } }
+      if (j.running) el2.textContent = "실행 중 — 창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
+      else if (j.done) { clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null; this.el.classList.remove("live"); el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runStop", this.el).hidden = true; $("#runGo", this.el).hidden = j.exit !== 0; $("#runFun", this.el).innerHTML = "";
+        Local._projects = null;
+        if (j.exit === 0) { if (FS.name === this.name) { UI.toast("AI 작업 완료 — 검수 화면으로 이동합니다", "o"); await FS.load(FS.name, true); renderSide(); setTimeout(() => { this.hide(); App.curTile = null; go("review"); }, 900); } else UI.toast(`${this.name} 제작 완료 — [검수로] 를 누르면 그 프로젝트로 이동합니다`, "o"); }
+        else { UI.toast("AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); } }
       else el2.textContent = "";
     };
     await tick(); this.timer = setInterval(tick, 1500);
-  },
-  async reload() { if (!FS.name) return; await FS.load(FS.name, true); Local._projects = null; renderSide(); }
+  }
 };
 
 /* ── 연결 섹션 (설정 안) ── */
@@ -1171,7 +1196,7 @@ const photoRows = () => FS.analysis.map(a => ({ name: a.name, w: a.w, h: a.h, si
 async function aiReady() {
   if (!Local.desktop) return { ok: false, why: "EXE 에서만 바로 실행됩니다" };
   let t; try { t = await Local.tools(); } catch (e) { return { ok: false, why: e.message }; }
-  if (t.run && t.run.running) return { ok: false, why: "이미 AI 작업이 실행 중입니다", running: true };
+  const mine = (t.runs || []).find(r => r.name === FS.name && r.running); if (mine) return { ok: false, why: "이 프로젝트는 이미 AI 작업 중입니다", running: true };
   if (!t.claude.installed) return { ok: false, why: "Claude Code 가 설치되지 않았습니다", fix: true };
   if (!t.claude.loggedIn) return { ok: false, why: "Claude Code 로그인이 필요합니다", fix: true };
   if (!t.higgsfield.connected || !t.higgsfield.authed) return { ok: false, why: "Higgsfield MCP 인증이 필요합니다", fix: true };
@@ -1215,7 +1240,7 @@ const ACT = {
   async make() {
     if (!App.secDone("product")) { if (App.view !== "brief") go("brief"); setTimeout(() => openCard("product"), 80); return UI.toast("상품 섹션(상품명·카테고리)부터 채워주세요", "w"); }
     const p = App.progress(), order = buildOrder();
-    const r = await FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order, photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: (App.brief.req || {}).photoMode || "keep" }, null, 2));
+    const r = await FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order, photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: photoModeOf() }, null, 2));
     const cmd = `${FS.name || "프로젝트"} 만들어줘`;
     const rd = Local.desktop ? await aiReady() : { ok: false };
     if (!FS.analysis.length) return UI.alert("사진이 없습니다", "제품 사진을 먼저 넣어주세요. 사진 없이는 제품이 들어간 타일을 만들 수 없습니다.", "w");
@@ -1223,7 +1248,7 @@ const ACT = {
     if (Local.desktop) btns.push(rd.ok ? { label: "여기서 바로 제작", value: 3, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" });
     else btns.push({ label: "명령 복사", value: 1, kind: "pri" });
     const v = await UI.dialog({ title: "제작 준비가 됐습니다", sub: `브리프와 사진 분석을 정리했습니다.`, icon: "sparkles", tone: rd.ok ? "o" : "b",
-      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행 로그가 오른쪽 아래에 뜹니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + "." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}<p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${(App.brief.req || {}).photoMode === "reinterpret" ? "AI 재해석" : "원본 합성"}</p>`,
+      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행 로그가 오른쪽 아래에 뜹니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + "." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}<p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${photoModeOf() === "keep" ? "원본 합성" : "AI 고화질 재현"}</p>`,
       buttons: btns });
     if (v === 3) return ACT.runAI("make");
     if (v === 4) return go("settings");
@@ -1232,7 +1257,7 @@ const ACT = {
     try { await navigator.clipboard.writeText(txt); UI.toast("복사했습니다 — 대화창에 붙여넣으세요", "o"); } catch (e) { UI.toast("복사 실패", "d"); }
   },
   async runAI(mode) {
-    try { await Local.run(FS.name, mode); RunUI.show(mode === "make" ? `제작 — ${FS.name}` : `검수 반영 — ${FS.name}`); UI.toast("AI 작업을 시작했습니다", "o"); }
+    try { await Local.run(FS.name, mode, "", photoModeOf()); RunUI.show(mode === "make" ? `제작 — ${FS.name}` : `검수 반영 — ${FS.name}`, FS.name, mode); UI.toast("AI 작업을 시작했습니다", "o"); }
     catch (e) { UI.alert("시작 실패", esc(e.message), "d"); }
   },
   /* 검수 영역·코멘트 → review.json + review/NN_marked.png → (EXE) AI 수정 */
@@ -1281,7 +1306,7 @@ function buildOrder() {
   L.push(`■ 브리프 (${p.done}/${p.total} 섹션)`);
   SECTIONS.filter(x => x.id !== "photos").forEach(sec => { if (App.secDone(sec.id)) L.push(`  ${sec.n}. ${sec.title} — ${App.secSummary(sec.id)}`); });
   const miss = SECTIONS.filter(x => x.id !== "photos" && !App.secDone(x.id)); if (miss.length) L.push(`  미작성: ${miss.map(m => m.title).join(", ")}`);
-  L.push(`  제품 사진 처리: ${(b.req || {}).photoMode === "reinterpret" ? "AI 재해석 허용" : "원본 그대로 합성 (TRACK A — 누끼·업스케일만, 재생성 금지)"}`, "");
+  L.push(`  제품 사진 처리: ${photoModeOf() === "keep" ? "원본 그대로 합성 (TRACK A — 누끼·업스케일만, 재생성 금지)" : "AI 고화질 재현 (원본 참고, 로고·글자·형태 유지, 없는 글자 추가 금지)"}`, "");
   const sel = layoutSel();
   L.push(`■ 페이지 구성 (${sel.length}개 섹션)`, "  " + sel.map(id => catOf(id).label).join(" → "));
   const hasReviews = !!(b.proof && (b.proof.reviews || "").trim()), hasAwards = !!(b.proof && (b.proof.certs || []).filter(x => x !== "없음").length);
@@ -1317,8 +1342,8 @@ async function boot() {
   go(!fresh && restored ? Store.get("view", "home") : "home");
   if (restored) UI.toast(`${FS.name} — 이어서 작업합니다`, "o");
   else if (!Local.ok) UI.toast("EXE 로 실행해 주세요 — 지금은 화면만 보입니다", "w");
-  if (Local.desktop) { try { const st = await Local.runStatus(0); if (st.running) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
+  if (Local.desktop) { try { const all = (await Local.runsAll()).runs || []; const st = all.find(r => r.running && r.name === FS.name) || all.find(r => r.running); if (st) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`, st.name, st.mode); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
 }
 document.addEventListener("DOMContentLoaded", boot);
-window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update };
+window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest };
 })();

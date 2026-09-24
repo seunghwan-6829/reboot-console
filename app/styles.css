@@ -535,3 +535,34 @@ code{background:var(--sunk);border-radius:4px;padding:1px 5px;font-size:12.5px;f
 
 .aisug{margin:10px 0 12px}
 .aisug .note{margin-bottom:0}
+
+/* ── 실행 패널 애니메이션 · 타일 스트립 · 사진 모드 선택 ── */
+.rticks{position:relative;overflow:hidden}
+.rshine{position:absolute;top:0;bottom:0;width:60px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);pointer-events:none;opacity:0;transform:translateX(-80px)}
+.runp.live .rshine{opacity:1;animation:shine 2.2s linear infinite}
+@keyframes shine{to{transform:translateX(520px)}}
+.runp.live .rticks i.cur{animation:tickpulse 1s ease-in-out infinite}
+@keyframes tickpulse{0%,100%{transform:scaleX(1.6) scaleY(1)}50%{transform:scaleX(1.6) scaleY(1.25)}}
+.runp.live .rticks i:not(.on){animation:tickidle 2.6s ease-in-out infinite}
+.runp.live .rticks i:not(.on):nth-child(3n){animation-delay:.4s}.runp.live .rticks i:not(.on):nth-child(3n+1){animation-delay:.9s}
+@keyframes tickidle{0%,100%{opacity:.55}50%{opacity:1}}
+.rpct b.bump{animation:bump .4s var(--ease)}
+@keyframes bump{30%{transform:scale(1.18)}}
+.runp.live .rdot{box-shadow:0 0 0 0 rgba(248,96,16,.5);animation:ring 1.6s infinite}
+@keyframes ring{to{box-shadow:0 0 0 9px rgba(248,96,16,0)}}
+.rfun{height:18px;font-size:12px;color:var(--brand);font-weight:600;overflow:hidden;margin:-4px 0 6px}
+.rfun span{display:block;animation:funin .5s var(--ease)}
+@keyframes funin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.rtiles{display:none;gap:6px;overflow-x:auto;padding:8px 0 2px;margin-top:8px;border-top:1px dashed var(--line)}
+.rtiles.has{display:flex}
+.rt{flex:none;width:54px;border-radius:6px;overflow:hidden;background:var(--sunk);position:relative;animation:tilein .5s var(--ease)}
+.rt img{display:block;width:54px;height:72px;object-fit:cover}
+.rt span{position:absolute;left:3px;top:3px;font-size:9px;font-weight:800;color:#fff;background:rgba(20,23,26,.7);padding:1px 4px;border-radius:3px}
+@keyframes tilein{from{opacity:0;transform:translateY(12px) scale(.9)}to{opacity:1;transform:none}}
+.pmpick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pm{text-align:left;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-lg);padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;transition:.15s var(--ease)}
+.pm:hover{border-color:var(--brand);background:var(--brand-soft);transform:translateY(-2px);box-shadow:var(--sh-2)}
+.pm b{font-size:14.5px}
+.pm small{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.pm em{font-style:normal;font-size:11.5px;font-weight:700;color:var(--brand);margin-top:4px}
+@media(max-width:640px){.pmpick{grid-template-columns:1fr}}

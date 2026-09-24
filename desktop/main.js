@@ -149,7 +149,7 @@ async function toolStatus() {
     claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "" },
     codex: { installed: !!codexV, version: codexV.replace(/^codex-cli\s*/i, ""), loggedIn: codexIn },
     higgsfield: { connected: hfReg, authed: hfAuth },
-    run: RUN.summary() };
+    runs: [...RUNS.values()].map(r => r.summary()), run: (() => { const r = [...RUNS.values()].find(x => x.proc && x.exit == null); return r ? r.summary() : { running: false }; })() };
 }
 /* 창 없이 실행 — 로그인 명령은 스스로 브라우저를 연다. 결과는 상태 폴링으로 확인. */
 const hidden = {};
@@ -219,15 +219,20 @@ async function toolAction(q) {
 
 /* ── Claude Code 헤드리스 실행 (제작 · 검수 반영) ────────── */
 const PROMPTS = {
-  make: n => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: 준비|사진 분석|기획안|타일 생성|오타 검수|정리" 중 하나, 타일 한 장을 저장할 때마다 "▶ 타일: n/N 섹션이름". N 은 만들 총 타일 수.
-${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, 특히 6-4 제품 무왜곡 TRACK A, 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. 제품 사진이 들어가는 타일은 원본을 재해석하지 말고 TRACK A(remove_background → upscale → PIL 합성)로 원본 픽셀을 보존한다(브리프의 photoMode 가 reinterpret 일 때만 예외). 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
+  photo: mode => mode === "keep"
+    ? `제품 사진 처리 = 원본 그대로 합성(TRACK A): 제품이 등장하는 타일은 remove_background → upscale_image → PIL 합성으로 원본 픽셀을 보존한다. 재생성 금지.`
+    : `제품 사진 처리 = AI 고화질 재현(사용자 선택): 원본 사진이 저화질이므로 그대로 쓰지 말고, 원본을 image_references 로 넣어(먼저 upscale_image 를 최대 2회) 제품의 형태·비율·색·로고·라벨 글자를 원본과 똑같이 유지한 스튜디오 품질 제품 컷(고해상도·깨끗한 조명·선명한 라벨)을 새로 만든다. 라벨에 실제로 있는 글자는 철자를 프롬프트에 그대로 명시하고, 없는 글자·인증마크·원산지·수치는 절대 추가하지 않는다. 생성 후 원본과 나란히 놓고 로고·글자·형태가 다르면 최대 2회 재생성, 그래도 다르면 그 타일만 TRACK A(원본 합성)로 후퇴하고 기획안에 【확인】 을 남긴다.`,
+  make: (n, photoMode) => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: 준비|사진 분석|기획안|타일 생성|오타 검수|정리" 중 하나, 타일 한 장을 저장할 때마다 "▶ 타일: n/N 섹션이름". N 은 만들 총 타일 수.
+${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, 특히 6-4 제품 무왜곡 TRACK A, 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. ${PROMPTS.photo(photoMode)} 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
   revise: n => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라: 단계가 바뀔 때마다 "▶ 단계: 준비|영역 확인|수정 생성|오타 검수|교체", 타일 한 장을 끝낼 때마다 "▶ 타일: n/N 섹션이름".
 ${n} 검수 반영해줘. 먼저 README.md 의 규칙을 읽는다. ${n}/review.json 을 읽어라 — 타일마다 regions(이미지 기준 0~1 비율 x,y,w,h 와 코멘트) 와 note 가 있고, ${n}/review/NN_marked.png 에는 그 영역이 빨간 번호 박스로 표시돼 있다. 각 타일에 대해: 원본 tiles/NN.png 를 image_references 로 넣고 marked 이미지도 함께 참조해 '번호 영역만 코멘트대로 바꾸고 나머지는 전부 동일하게 유지'(MAKE EXACTLY N CHANGES) 방식으로 Higgsfield gpt_image_2_5 편집을 돌린다. 톤앤매너·팔레트·서체·제품 형태는 요청에 명시되지 않는 한 절대 바꾸지 않는다. 결과는 tiles/edits/NN_v{k}.png 에 저장하고 한 글자씩 대조한 뒤 원본을 tiles/NN.png 로 교체하기 전에 원본을 tiles/v_prev/ 에 백업한다. 끝나면 마지막 줄에 '완료: 수정 N장' 이라고 답한다.`
 };
 const STAGES = { make: ["준비", "사진 분석", "기획안", "타일 생성", "오타 검수", "정리"], revise: ["준비", "영역 확인", "수정 생성", "오타 검수", "교체"], custom: ["준비", "작업", "정리"] };
-const RUN = {
-  proc: null, name: "", mode: "", lines: [], startedAt: 0, done: false, exit: null,
-  stage: "", stageIdx: -1, tileDone: 0, tileTotal: 0, tileName: "", last: "",
+const RUNS = new Map();                                   // 프로젝트 이름 → 실행 객체 (동시에 여러 프로젝트 제작 가능)
+const anyRunning = () => [...RUNS.values()].some(r => r.proc && r.exit == null);
+const runFor = name => RUNS.get(name) || null;
+function makeRun() { return Object.assign(Object.create(RUN_PROTO), { proc: null, name: "", mode: "", lines: [], startedAt: 0, done: false, exit: null, stage: "", stageIdx: -1, tileDone: 0, tileTotal: 0, tileName: "", last: "" }); }
+const RUN_PROTO = {
   stages() { return STAGES[this.mode] || STAGES.custom; },
   pct() {
     const st = this.stages(); if (this.done && this.exit === 0) return 100;
@@ -258,10 +263,9 @@ const RUN = {
     }
   },
   push(kind, text) { this.lines.push({ t: Date.now(), kind, text: String(text).slice(0, 4000) }); if (this.lines.length > 2000) this.lines.splice(0, this.lines.length - 2000); },
-  start(name, mode, custom) {
-    if (this.proc && this.exit == null) return { ok: false, error: "이미 실행 중입니다" };
+  start(name, mode, custom, photoMode) {
     if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
-    const prompt = custom || (PROMPTS[mode] ? PROMPTS[mode](name) : null);
+    const prompt = custom || (PROMPTS[mode] ? PROMPTS[mode](name, photoMode || "regen") : null);
     if (!prompt) return { ok: false, error: "모르는 모드" };
     this.name = name; this.mode = mode; this.lines = []; this.done = false; this.exit = null; this.startedAt = Date.now();
     this.stage = ""; this.stageIdx = -1; this.tileDone = 0; this.tileTotal = 0; this.tileName = ""; this.last = "";
@@ -278,7 +282,7 @@ const RUN = {
     p.stdout.on("data", d => { buf += d.toString("utf8"); let i; while ((i = buf.indexOf("\n")) >= 0) { const ln = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (ln) this.ingest(ln); } });
     p.stderr.on("data", d => { const s = d.toString("utf8").trim(); if (s) this.push("err", s); });
     p.on("error", e => { this.push("err", "실행 오류: " + e.message); this.exit = -1; this.done = true; });
-    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; if (code === 0) this.stageIdx = this.stages().length - 1; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); onRunFinished(code); if (UPD.state === "downloaded-wait") { UPD.state = "downloaded"; setTimeout(() => UPD.tryInstall(), 15000); } });
+    p.on("close", code => { if (buf.trim()) this.ingest(buf.trim()); this.exit = code; this.done = true; if (code === 0) this.stageIdx = this.stages().length - 1; this.push("sys", code === 0 ? "끝" : "종료 코드 " + code); onRunFinished(code, this); if (!anyRunning() && UPD.state === "downloaded-wait") { UPD.state = "downloaded"; setTimeout(() => UPD.tryInstall(), 15000); } });
     return { ok: true, message: "시작했습니다" };
   },
   ingest(ln) {
@@ -317,7 +321,7 @@ const UPD = {
   /* AI 작업 중이 아니면 5초 뒤 무음 설치 + 재실행. 작업 중이면 끝날 때(RUN close) 다시 시도, 그래도 아니면 종료 시 설치 */
   tryInstall() {
     if (this.state !== "downloaded" || this.installing) return;
-    if (RUN.proc && RUN.exit == null) { this.state = "downloaded-wait"; return; }
+    if (anyRunning()) { this.state = "downloaded-wait"; return; }
     this.installing = true; this.state = "installing";
     setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (e) { this.installing = false; this.state = "error"; this.error = String(e.message || e); } }, 5000);
   },
@@ -402,12 +406,20 @@ async function handle(req, res) {
     if (p === "/local/run") {
       if (req.method === "POST") {
         const act = q.get("do") || "start";
-        if (act === "stop") return json(res, 200, RUN.stop());
+        if (act === "stop") { const r = runFor(q.get("name") || ""); return json(res, 200, r ? r.stop() : { ok: false, error: "실행 중이 아닙니다" }); }
         const body = (await readBody(req, 200000)).toString("utf8"); let b = {}; try { b = body ? JSON.parse(body) : {}; } catch (e) {}
-        return json(res, 200, RUN.start(b.name || q.get("name") || "", b.mode || q.get("mode") || "make", b.prompt || ""));
+        const name = b.name || q.get("name") || "";
+        const cur = runFor(name); if (cur && cur.proc && cur.exit == null) return json(res, 200, { ok: false, error: "이 프로젝트는 이미 AI 작업 중입니다" });
+        if ([...RUNS.values()].filter(r => r.proc && r.exit == null).length >= 3) return json(res, 200, { ok: false, error: "동시에 3개까지만 돌릴 수 있습니다" });
+        const r = makeRun(); const out = r.start(name, b.mode || q.get("mode") || "make", b.prompt || "", b.photoMode || "");
+        if (out.ok) RUNS.set(name, r);
+        return json(res, 200, out);
       }
+      const name = q.get("name") || "";
+      if (!name) return json(res, 200, { ok: true, runs: [...RUNS.values()].map(r => r.summary()) });
+      const r = runFor(name); if (!r) return json(res, 200, { ok: true, running: false, done: false, lines: [], next: 0, name });
       const since = Math.max(0, +(q.get("since") || 0));
-      return json(res, 200, Object.assign({ ok: true, lines: RUN.lines.slice(since), next: RUN.lines.length }, RUN.summary()));
+      return json(res, 200, Object.assign({ ok: true, lines: r.lines.slice(since), next: r.lines.length }, r.summary()));
     }
     if (p === "/local/save" && req.method === "POST") {
       const n = q.get("name") || "", f = q.get("file") || "";
@@ -489,17 +501,17 @@ function startServer() {
 let tray = null, hiddenForRun = false;
 function trayIcon() { try { return nativeImage.createFromPath(path.join(APP_DIR, "assets", "icon-32.png")); } catch (e) { return nativeImage.createEmpty(); } }
 function toTray() {
-  if (!tray) { tray = new Tray(trayIcon()); tray.setContextMenu(Menu.buildFromTemplate([{ label: "콘솔 열기", click: () => restoreWin() }, { type: "separator" }, { label: "AI 작업 중단하고 종료", click: () => { RUN.stop(); setTimeout(() => app.exit(0), 800); } }])); tray.on("click", () => restoreWin()); }
+  if (!tray) { tray = new Tray(trayIcon()); tray.setContextMenu(Menu.buildFromTemplate([{ label: "콘솔 열기", click: () => restoreWin() }, { type: "separator" }, { label: "AI 작업 모두 중단하고 종료", click: () => { RUNS.forEach(r => { try { r.stop(); } catch (e) {} }); setTimeout(() => app.exit(0), 800); } }])); tray.on("click", () => restoreWin()); }
   tray.setToolTip("re:boot 콘솔 — AI 작업 중 (클릭해서 열기)");
   hiddenForRun = true; if (win) win.hide();
 }
 function restoreWin() { hiddenForRun = false; if (win) { win.show(); win.focus(); } else createWindow(); if (tray) { tray.destroy(); tray = null; } }
 const SMOKE = process.argv.includes("--smoke");
-function onRunFinished(code) {
+function onRunFinished(code, run) {
   if (SMOKE) return;                                                       // 검증 인스턴스는 알림·창 조작 없음
   const away = hiddenForRun || !win || !win.isFocused();                  // 콘솔을 보고 있으면 굳이 OS 알림까지 안 띄움
-  try { if (away && Notification.isSupported()) new Notification({ title: code === 0 ? "re:boot — AI 작업 완료" : "re:boot — AI 작업 종료", body: `${RUN.name} · ${code === 0 ? "검수 화면으로 이동합니다" : "종료 코드 " + code}`, icon: trayIcon() }).show(); } catch (e) {}
-  if (hiddenForRun) restoreWin(); else if (win) { win.flashFrame(true); }
+  try { if (away && Notification.isSupported()) new Notification({ title: code === 0 ? "re:boot — AI 작업 완료" : "re:boot — AI 작업 종료", body: `${run.name} · ${code === 0 ? "검수 화면에서 확인하세요" : "종료 코드 " + code}`, icon: trayIcon() }).show(); } catch (e) {}
+  if (hiddenForRun && !anyRunning()) restoreWin(); else if (win && !hiddenForRun) { win.flashFrame(true); }
 }
 
 /* ── 창 ─────────────────────────────────────────────── */
@@ -525,7 +537,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   win.once("ready-to-show", () => { win.show(); if (st.max) win.maximize(); });
   const save = () => { if (!win) return; const b = win.getNormalBounds(); writeCfg(Object.assign(readCfg(), { win: { x: b.x, y: b.y, w: b.width, h: b.height, max: win.isMaximized() } })); };
-  win.on("close", e => { save(); if (UPD.installing) return; if (RUN.proc && RUN.exit == null) { e.preventDefault(); toTray(); } });
+  win.on("close", e => { save(); if (UPD.installing) return; if (anyRunning()) { e.preventDefault(); toTray(); } });
   win.on("closed", () => { win = null; });
   win.loadURL(`http://127.0.0.1:${PORT}/app/`);
 }

@@ -407,9 +407,10 @@ v1.2에서 **배송을 16:9 배너로 만들어 최상단(01)** 에, **Q&A·추�
 
 ### 제품 사진 변형 줄이기 (6-4 보강)
 
-- 브리프 `req.photoMode` 가 `keep`(기본) 이면 제품이 등장하는 모든 타일은 **TRACK A**: `remove_background` → `upscale_image` → PIL 로 비율 고정 합성. 배경·소품·타이포만 생성하고 제품 픽셀은 원본 그대로.
-- 원본이 1200px 미만이면 먼저 `upscale_image` 를 두 번까지. 그래도 부족하면 기획안에 【확인】 "재촬영 권장" 을 남기고, `image_references` 재해석은 **하지 않는다**(라벨 날조 사고 재발 방지).
-- `reinterpret` 일 때만 `image_references` 허용. 그때도 "no certification logos/flags/origin text, keep label text exactly as: …" 를 프롬프트에 박는다.
+- 사진 분석 뒤 플로팅 선택(6단계에서도 변경): **AI 고화질 재현**(기본·권장, `regen`) / **원본 그대로 합성**(`keep`).
+- `regen`: 원본을 `image_references` 로 참고(먼저 `upscale_image` ≤2회)해 **형태·비율·색·로고·라벨 글자를 그대로 유지한** 스튜디오급 제품 컷을 새로 만든다. 라벨의 실제 글자는 철자를 프롬프트에 명시, 없는 글자·인증·원산지·수치 추가 금지. 생성 후 원본과 대조해 다르면 2회까지 재생성, 그래도 다르면 그 타일만 TRACK A 로 후퇴 + 【확인】.
+- `keep`: 제품이 등장하는 모든 타일은 **TRACK A**: `remove_background` → `upscale_image` → PIL 로 비율 고정 합성. 배경·소품·타이포만 생성하고 제품 픽셀은 원본 그대로.
+- 어느 모드든 "no certification logos/flags/origin text, keep label text exactly as: …" 를 프롬프트에 박는다(사과 프로젝트 라벨 날조 사고 재발 방지).
 
 ## 12. (삭제) Vercel 클라우드
 
