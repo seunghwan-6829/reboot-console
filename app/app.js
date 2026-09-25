@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   re:boot — 상세페이지 제작 콘솔  (v4.1)
+   re:boot — 상세페이지 제작 콘솔  (v4.8)
    서버(파이썬 _launch.py 또는 EXE 내장 Node)가 폴더를 읽고 쓴다.
    EXE 에서는 도구 로그인(창 없음)·Claude Code 헤드리스 제작·검수 반영까지 여기서 돈다.
    ═══════════════════════════════════════════ */
@@ -37,7 +37,18 @@ const ICON = {
   refresh:  'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',
   ext:      'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
   drag:     'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
-  stop:     'M6 6h12v12H6z'
+  stop:     'M6 6h12v12H6z',
+  gauge:    'M4 15a8 8 0 1 1 16 0M12 15l4-5M7 19h10',
+  clock:    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2',
+  spell:    'M3 17 7 6l4 11M4.5 13h5M13 14l3 3 5-6',
+  inbox:    'M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6Z',
+  kanban:   'M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v7h-4z',
+  globe:    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z',
+  history:  'M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 8v4l3 2',
+  keyboard: 'M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10',
+  type:     'M5 7V5h14v2M12 5v14M9 19h6',
+  chevU:    'm6 15 6-6 6 6',
+  mobile:   'M7 3h10v18H7zM11 18h2'
 };
 function svg(name, cls) {
   const d = ICON[name] || "";
@@ -119,7 +130,7 @@ const Store = {
 };
 
 /* ═══ 설정값 (설정 탭에서 조정) ═══ */
-const SET_DEF = { theme: "system", baseW: 860, autoNext: true, minLong: 1200, tabFill: true, toastSec: 2.6, jpegQ: 82 };
+const SET_DEF = { theme: "system", baseW: 860, autoNext: true, minLong: 1200, tabFill: true, toastSec: 2.6, jpegQ: 82, readPx: 12, readContrast: 4.5 };
 const SET = Object.assign({}, SET_DEF, Store.get("settings", {}));
 function saveSet() { Store.set("settings", SET); applyTheme(); }
 function applyTheme() {
@@ -179,30 +190,50 @@ const Local = {
   async ping() {
     try { const r = await fetch("/local/ping", { cache: "no-store" }); const ct = r.headers.get("content-type") || "";
       const j = r.ok && ct.includes("application/json") ? await r.json() : null;
-      this.ok = !!(j && j.ok); this.desktop = !!(j && j.desktop); this.root = (j && j.root) || ""; } catch (e) { this.ok = false; }
+      this.ok = !!(j && j.ok); this.desktop = !!(j && j.desktop); this.root = (j && j.root) || ""; this.version = (j && j.version) || ""; } catch (e) { this.ok = false; }
     return this.ok;
   },
   async _j(url, opt) { const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {})); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) throw new Error(j.error || `요청 실패 (${r.status})`); return j; },
+  _post(url, body) { return this._j(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); },
   async projects(force) { if (this._projects && !force) return this._projects; return (this._projects = (await this._j("/local/projects")).projects || []); },
   project(name) { return this._j("/local/project?name=" + encodeURIComponent(name)); },
   save(name, file, text) { return this._j(`/local/save?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: text }); },
   saveImage(name, file, blob) { return this._j(`/local/save-image?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }); },
+  saveJpg(name, file, blob) { return this._j(`/local/save-image?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob }); },
+  clearDir(name, sub) { return this._j(`/local/clear-dir?name=${encodeURIComponent(name)}&sub=${encodeURIComponent(sub)}`, { method: "POST" }); },
   exportPreview(name, ver) { return this._j(`/local/export?name=${encodeURIComponent(name)}&ver=${encodeURIComponent(ver || "v1")}`); },
   createProject(name) { return this._j("/local/project-create?name=" + encodeURIComponent(name), { method: "POST" }); },
   addPhoto(name, file, blob) { return this._j(`/local/photo?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob }); },
-  deletePhoto(name, file) { return this._j(`/local/photo-delete?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}`, { method: "POST" }); },
-  pasteClip(name) { return this._j(`/local/paste?name=${encodeURIComponent(name)}`, { method: "POST" }); },
-  suggest(name, hint) { return this._j("/local/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, hint }) }); },
+  addRef(name, file, blob) { return this._j(`/local/photo?name=${encodeURIComponent(name)}&sub=ref&file=${encodeURIComponent(file)}`, { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob }); },
+  deletePhoto(name, file) { return this.deleteFile(name, file, ""); },
+  deleteFile(name, file, sub) { return this._j(`/local/photo-delete?name=${encodeURIComponent(name)}&file=${encodeURIComponent(file)}${sub ? "&sub=" + sub : ""}`, { method: "POST" }); },
+  pasteClip(name, sub) { return this._j(`/local/paste?name=${encodeURIComponent(name)}${sub ? "&sub=" + sub : ""}`, { method: "POST" }); },
+  suggest(name, hint) { return this._post("/local/suggest", { name, hint }); },
   suggestStatus() { return this._j("/local/suggest"); },
   /* EXE 전용 */
   tools() { return this._j("/local/tools"); },
   toolAct(action, extra) { return this._j("/local/tools?" + new URLSearchParams(Object.assign({ do: action }, extra || {})), { method: "POST" }); },
-  run(name, mode, prompt, photoMode) { return this._j("/local/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, mode, prompt: prompt || "", photoMode: photoMode || "" }) }); },
-  runStatus(name, since) { return this._j(`/local/run?name=${encodeURIComponent(name)}&since=${since || 0}`); },
+  run(name, mode, prompt, photoMode, extra) { return this._post("/local/run", Object.assign({ name, mode, prompt: prompt || "", photoMode: photoMode || "" }, extra || {})); },
+  runStatus(name, since, rid) { return this._j(`/local/run?name=${encodeURIComponent(name)}&since=${since || 0}&rid=${rid || 0}`); },
   runsAll() { return this._j("/local/run"); },
   runStop(name) { return this._j(`/local/run?do=stop&name=${encodeURIComponent(name)}`, { method: "POST" }); },
   update() { return this._j("/local/update"); },
-  updateAct(what) { return this._j("/local/update?do=" + what, { method: "POST" }); }
+  updateAct(what) { return this._j("/local/update?do=" + what, { method: "POST" }); },
+  queue() { return this._j("/local/queue"); },
+  queueAdd(b) { return this._post("/local/queue?do=add", b); },
+  queueAct(what, id, b) { return this._post(`/local/queue?do=${encodeURIComponent(what)}&id=${encodeURIComponent(id || "")}`, b || {}); },
+  config() { return this._j("/local/config"); },
+  configSet(b) { return this._post("/local/config", b); },
+  log(name, limit) { return this._j(`/local/log?name=${encodeURIComponent(name || "")}&limit=${limit || 200}`); },
+  logAdd(name, kind, text, dir) { return this._post("/local/log", { name: name || "", kind, text, dir: dir || "" }).catch(() => {}); },
+  usage(force) { return this._j("/local/usage" + (force ? "?force=1" : "")); },
+  job(kind, name) { return this._j(`/local/job?kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name)}`); },
+  ocr(name, tiles) { return this._j(`/local/ocr?name=${encodeURIComponent(name)}${tiles && tiles.length ? "&tiles=" + encodeURIComponent(tiles.join(",")) : ""}`); },
+  typo(name) { return this._j("/local/typo?name=" + encodeURIComponent(name), { method: "POST" }); },
+  feedback(name, text) { return this._post("/local/feedback?name=" + encodeURIComponent(name), { text }); },
+  ref(name, urls, note) { return this._post("/local/ref?name=" + encodeURIComponent(name), { urls, note }); },
+  psd(name, tiles) { return this._j(`/local/psd?name=${encodeURIComponent(name)}${tiles && tiles.length ? "&tiles=" + encodeURIComponent(tiles.join(",")) : ""}`, { method: "POST" }); },
+  restore(name, tile, file) { return this._j(`/local/tile-restore?name=${encodeURIComponent(name)}&tile=${encodeURIComponent(tile)}&file=${encodeURIComponent(file)}`, { method: "POST" }); }
 };
 
 /* ═══ 자동 업데이트 — 조용히. 내려받는 건 백그라운드, 설치는 틈 날 때 알아서 재시작 ═══ */
@@ -227,6 +258,7 @@ const Update = {
 /* ═══ 프로젝트 ═══ */
 const FS = {
   name: "", files: [], analysis: [], summary: null, tileMeta: {},
+  images: [], history: {}, meta: {}, cuts: [], cutsMeta: null, approved: null, refs: [], ref: null, typo: null, feedback: null, lastRun: null, plan: null,
 
   async load(name, quiet) {
     let p;
@@ -239,7 +271,7 @@ const FS = {
     const ord = Array.isArray(this.tileMeta._order) ? this.tileMeta._order : [];
     App.tiles = (p.tiles || []).filter(t => !/^_/.test(t.name)).map(t => {
       const n = t.name.replace(/\.[^.]+$/, ""), m = this.tileMeta[n] || {};
-      return { n, name: m.name || "", copy: m.copy || "", ratio: m.ratio || "", f: t.url };
+      return { n, name: m.name || "", copy: m.copy || "", ratio: m.ratio || "", f: t.url, mtime: t.mtime, file: t.name };
     }).sort((a, b) => { const ia = ord.indexOf(a.n), ib = ord.indexOf(b.n); if (ia === -1 && ib === -1) return a.n.localeCompare(b.n, "en", { numeric: true }); if (ia === -1) return 1; if (ib === -1) return -1; return ia - ib; });
     const saved = (p.brief && p.brief.brief) || (p.order && p.order.brief) || (p.brief && p.brief.product ? p.brief : null);
     if (saved && typeof saved === "object") App.brief = saved; else if (switching) App.brief = {};
@@ -247,6 +279,9 @@ const FS = {
     const rv = (p.review && p.review.tiles) || (p.order && p.order.review) || null;
     if (rv && typeof rv === "object") App.review = App.migrateReview(rv); else if (switching) App.review = {};
     App.suggest = (p.suggest && typeof p.suggest === "object") ? p.suggest : null;
+    this.images = p.images || []; this.history = p.history || {}; this.meta = p.meta || {}; this.cuts = p.cuts || []; this.cutsMeta = p.cutsMeta || null;
+    this.approved = p.approved && p.approved.file ? p.approved : null; this.refs = p.refs || []; this.ref = p.ref || null; this.typo = p.typo || null;
+    this.feedback = p.feedback || null; this.lastRun = p.lastRun || null; this.plan = p.plan || null;
     App.saveBrief(); App.saveReview();
     this.files = files; this.analysis = [];
     for (const f of files) this.analysis.push(await Analyze.file(f));
@@ -356,7 +391,7 @@ const App = {
   migrateReview(rv) {
     const out = {};
     Object.entries(rv || {}).forEach(([n, r]) => { if (!r || typeof r !== "object") return;
-      out[n] = { regions: Array.isArray(r.regions) ? r.regions.filter(g => g && typeof g.x === "number").map(g => ({ x: g.x, y: g.y, w: g.w, h: g.h, text: g.text || "" })) : [],
+      out[n] = { regions: Array.isArray(r.regions) ? r.regions.filter(g => g && typeof g.x === "number").map(g => { const o = { x: g.x, y: g.y, w: g.w, h: g.h, text: g.text || "" }; if (g.kind === "text") { o.kind = "text"; o.from = String(g.from || ""); o.to = String(g.to || ""); if (g.auto) o.auto = g.auto; } return o; }) : [],
         note: typeof r.note === "string" ? r.note : [r.request, r.extNote].filter(x => x && String(x).trim()).join("\n") }; });
     return out;
   },
@@ -435,11 +470,11 @@ function renderSide() {
     if (!App.tiles.length) h += `<p class="hint" style="padding:0 8px">아직 타일이 없습니다.</p>`;
     else h += `<p class="hint" style="padding:0 8px 4px;font-size:11.5px">잡고 끌면 순서가 바뀝니다 (타일·내보내기에 반영)</p>`;
     App.tiles.forEach((tl, i) => {
-      const req = App.hasReq(tl.n), cur = App.curTile === tl.n, rc = ((App.review[tl.n] || {}).regions || []).length;
+      const req = App.hasReq(tl.n), cur = App.curTile === tl.n, rc = ((App.review[tl.n] || {}).regions || []).length, ty = Typo.of(tl), tyn = ty && ty.fresh ? (ty.issues || []).length : 0;
       h += `<button class="sitem tile${cur ? " on" : ""}" data-tile="${i}" draggable="true" title="${esc(tl.copy || "")}">
         <span class="gh">${svg("drag")}</span><span class="st ${req ? "s-edit" : ""}"></span>
         <span class="lb">${esc(tl.n)}${tl.name ? ". " + esc(tl.name) : ""}</span>
-        ${rc ? `<span class="cnt rq">${rc}</span>` : ""}${tl.ratio && tl.ratio !== "9:16" ? `<span class="cnt">${esc(tl.ratio)}</span>` : ""}</button>`;
+        ${tyn ? `<span class="cnt ty" title="오타 의심">!${tyn}</span>` : ""}${rc ? `<span class="cnt rq">${rc}</span>` : ""}${tl.ratio && tl.ratio !== "9:16" ? `<span class="cnt">${esc(tl.ratio)}</span>` : ""}</button>`;
     });
     h += `</div>`;
     if (App.view === "review") h += `<div class="sgroup"><h4>요청 현황</h4><div class="tally side"><span class="t-b">요청 ${t.req}장</span><span class="t-c">영역 ${t.regions}</span><span class="t-d">없음 ${t.total - t.req}</span></div></div>`;
@@ -455,9 +490,11 @@ function renderSide() {
   h += `<div class="sgroup"><h4>작업</h4>
     <button class="sitem" data-act="newproj"><span class="ic">${svg("plus")}</span><span class="lb">새 프로젝트</span></button>
     <button class="sitem" data-act="addPhotos"><span class="ic">${svg("photo")}</span><span class="lb">사진 추가</span></button>
-    <button class="sitem" data-act="exportPreview"><span class="ic">${svg("eye")}</span><span class="lb">클라이언트 프리뷰</span></button>
+    ${App.tiles.length ? `<button class="sitem" data-act="feedback"><span class="ic">${svg("inbox")}</span><span class="lb">피드백 붙여넣기</span></button>` : ""}
+    <button class="sitem" data-act="exportMenu"><span class="ic">${svg("down")}</span><span class="lb">내보내기 <small class="sm2">프리뷰·채널·PSD</small></span></button>
     <button class="sitem hi" data-act="make"><span class="ic">${svg("sparkles")}</span><span class="lb">AI로 상세페이지 만들기</span></button>
     ${App.tiles.length ? `<button class="sitem hi" data-act="revise"><span class="ic">${svg("edit")}</span><span class="lb">검수 반영 (AI 수정)</span></button>` : ""}
+    ${(() => { const q = (QueueUI.items || []).filter(i => i.status === "waiting" || i.status === "running"); return q.length ? `<button class="sitem" data-act="goprojects"><span class="ic">${svg("clock")}</span><span class="lb">대기열</span><span class="cnt">${q.length}</span></button>` : ""; })()}
   </div>`;
   s.innerHTML = h;
   s.onclick = async e => {
@@ -524,7 +561,7 @@ const Home = { title: "홈", render(v) {
     { label: "브리프", sub: `${p.done}/${p.total} 섹션`, done: p.done === p.total, act: "gobrief" },
     { label: "제작", sub: App.tiles.length ? `타일 ${App.tiles.length}장` : Local.desktop ? "여기서 바로 제작" : "지시서 → Claude", done: App.tiles.length > 0, act: App.tiles.length ? "gotiles" : "make" },
     { label: "검수", sub: App.tiles.length ? (t.req ? `요청 ${t.req}장 · 영역 ${t.regions}` : "요청 없음") : "타일 없음", done: App.tiles.length > 0 && t.req === 0, act: "goreview" },
-    { label: "전달", sub: "클라이언트 프리뷰", done: false, act: "exportPreview" }
+    { label: "전달", sub: "프리뷰 · 채널 이미지 · PSD", done: false, act: "exportMenu" }
   ];
   let curIdx = steps.findIndex(x => !x.done); if (curIdx < 0) curIdx = steps.length - 1;
   v.innerHTML = `<div class="wrap wide home">
@@ -532,10 +569,11 @@ const Home = { title: "홈", render(v) {
       <div><div class="eyebrow">${has ? "작업 중" : "시작"}</div><h1 class="pg">${esc(FS.name || "프로젝트를 열어주세요")}</h1>
         <p class="pgsub">${has ? `${new Date().toLocaleDateString("ko-KR")} · 브리프 ${p.done}/${p.total} · 타일 ${App.tiles.length}장 · 검수 요청 ${t.req}장` : "새 프로젝트를 만들고 사진을 끌어다 놓으면 분석부터 자동으로 시작합니다."}</p></div>
       <div class="hbtns">
-        ${has ? `<button class="btn" data-act="exportPreview">${svg("eye")} 프리뷰</button><button class="btn pri" data-act="${App.tiles.length ? "goreview" : "gobrief"}">${App.tiles.length ? svg("check") + " 검수 계속" : svg("edit") + " 브리프 계속"}</button>`
+        ${has ? `${App.tiles.length ? `<button class="btn" data-act="feedback">${svg("inbox")} 피드백 붙여넣기</button>` : ""}<button class="btn" data-act="exportMenu">${svg("down")} 내보내기</button><button class="btn pri" data-act="${App.tiles.length ? "goreview" : "gobrief"}">${App.tiles.length ? svg("check") + " 검수 계속" : svg("edit") + " 브리프 계속"}</button>`
               : `<button class="btn" data-act="goprojects">${svg("folder")} 프로젝트 열기</button><button class="btn pri lg" data-act="newproj">${svg("plus")} 새 프로젝트</button>`}
       </div>
     </div>
+    <div id="homeResume"></div>
     <div class="stepper">${steps.map((st, i) => `<button class="stp${st.done ? " done" : ""}${i === curIdx ? " cur" : ""}" data-act="${st.act}">
       <span class="sn">${st.done ? svg("check") : i + 1}</span><span class="sl"><b>${st.label}</b><small>${esc(st.sub)}</small></span></button>`).join("")}
       <i class="bar" style="--w:${Math.max(0, curIdx) / (steps.length - 1) * 100}%"></i></div>
@@ -543,48 +581,119 @@ const Home = { title: "홈", render(v) {
       <div class="stat"><small>사진</small><b>${FS.files.length}<span>장</span></b><em>${s ? `평균 ${s.avgLong}px${s.low ? ` · <i class="w">부족 ${s.low}</i>` : " · 양호"}` : ""}</em></div>
       <div class="stat"><small>브리프</small><b>${p.done}<span>/${p.total}</span></b><em>${p.done === p.total ? "완료" : SECTIONS.find(x => x.id !== "photos" && !App.secDone(x.id)).title + " 남음"}</em></div>
       <div class="stat"><small>타일</small><b>${App.tiles.length}<span>장</span></b><em>${App.tiles.length ? layoutSel().length + "섹션 구성" : "미제작"}</em></div>
-      <div class="stat"><small>검수 요청</small><b>${t.req}<span>/${t.total}</span></b><em>${t.regions ? `영역 ${t.regions}개` : "영역 없음"}</em></div>
+      <div class="stat"><small>검수 요청</small><b>${t.req}<span>/${t.total}</span></b><em>${t.regions ? `영역 ${t.regions}개` : "영역 없음"}${Typo.count() ? ` · <i class="w">오타 의심 ${Typo.count()}</i>` : ""}</em></div>
     </div>` : ""}
     ${has && App.tiles.length ? `<h3 class="h3">타일 미리보기</h3><div class="mini">${App.tiles.slice(0, 8).map(tl => {
       const req = App.hasReq(tl.n);
       return `<div class="mtile" data-t="${esc(tl.n)}"><img src="${tl.f}" loading="lazy" alt=""><span>${esc(tl.n)}</span>${req ? `<i class="s-edit">수정 요청</i>` : ""}</div>`; }).join("")}
       ${App.tiles.length > 8 ? `<button class="mtile more" data-act="gotiles">+${App.tiles.length - 8}<small>더 보기</small></button>` : ""}</div>` : ""}
+    ${Local.ok ? `<div class="hlog"><h3 class="h3">작업 기록 <span class="cntl" style="font-size:13px">${FS.name ? "이 프로젝트" : "전체"}</span><span class="sp"></span><button class="btn sm ghost" data-act="timeline" data-arg="${esc(FS.name || "")}">${svg("history")} 전체 보기</button></h3><div id="homeTl"><p class="hint">불러오는 중…</p></div></div>` : ""}
   </div>`;
-  v.onclick = e => { const a = e.target.closest("[data-act]"); if (a) return ACT[a.dataset.act](); const m = e.target.closest(".mtile[data-t]"); if (m) { App.curTile = m.dataset.t; go("tiles"); } };
+  v.onclick = async e => { if (await tlClick(e)) return; const a = e.target.closest("[data-act]"); if (a) return ACT[a.dataset.act](a.dataset.arg); const m = e.target.closest(".mtile[data-t]"); if (m) { App.curTile = m.dataset.t; go("tiles"); } };
+  if (Local.ok) Local.log(FS.name || "", 12).then(j => { const b = $("#homeTl", v); if (b) b.innerHTML = tlHtml(j.items, !FS.name); }).catch(() => {});
+  // 지난 AI 작업이 끝나지 않았으면 → 이어서 하기 (#13)
+  const lr = FS.lastRun;
+  if (Local.desktop && FS.name && lr && lr.mode && lr.exit !== 0) {
+    Local.runStatus(FS.name, 1e9).then(j => {
+      const b = $("#homeResume", v); if (!b || j.running) return;
+      b.innerHTML = `<div class="note w">${svg("warn")}<div class="nb"><b>지난 ${esc(MODE_LABEL[lr.mode] || "AI")} 작업이 끝나지 않았습니다</b>${lr.at ? ` (${fmtT(lr.end || lr.at)})` : ""}${lr.err ? ` — ${esc(lr.err).slice(0, 90)}` : ""}<br>이미 만든 타일은 그대로 두고 남은 것만 이어서 합니다. <button class="btn sm pri" data-act="resume" style="margin-left:6px">${svg("refresh")} 이어서 하기</button></div></div>`;
+    }).catch(() => {});
+  }
 }};
 
-/* ── 프로젝트 목록 ── */
+/* ── 프로젝트 목록 (카드 · 칸반 보드 · 대기열) ── */
 const fmtD = t => { if (!t) return "—"; const d = new Date(t * 1000); return `${d.getFullYear().toString().slice(2)}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const fmtDur = sec => { if (sec == null || sec < 0) return "—"; if (sec < 60) return "1분 미만"; const m = Math.round(sec / 60); if (m < 60) return m + "분"; const h = Math.floor(m / 60); if (h < 24) return h + "시간 " + (m % 60 ? (m % 60) + "분" : ""); const d = Math.floor(h / 24); return d + "일 " + (h % 24 ? (h % 24) + "시간" : ""); };
 const fmtAgo = t => { if (!t) return ""; const s = Date.now() / 1000 - t; if (s < 3600) return Math.max(1, Math.round(s / 60)) + "분 전"; if (s < 86400) return Math.round(s / 3600) + "시간 전"; return Math.round(s / 86400) + "일 전"; };
-const Projects = { title: "프로젝트", async render(v) {
+const STAGE_UI = [["photos", "사진"], ["brief", "브리프"], ["ready", "제작 대기"], ["making", "제작 중"], ["review", "검수"], ["sent", "전달"], ["done", "납품 완료"], ["hold", "보류"]];
+const STAGE_CLS = { photos: "s-hold", brief: "s-hold", ready: "s-edit", making: "s-extend", review: "s-extend", sent: "s-approved", done: "s-done", hold: "s-hold" };
+const stageLabel = id => (STAGE_UI.find(s => s[0] === id) || ["", id])[1];
+const dnum = s => { if (!s) return null; const d = new Date(s + "T00:00:00"), t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((d - t) / 864e5); };
+const dday = s => { const n = dnum(s); return n == null || isNaN(n) ? "" : n === 0 ? "D-day" : n > 0 ? "D-" + n : "D+" + (-n); };
+const ddCls = s => { const n = dnum(s); return n == null ? "" : n < 0 ? "late" : n <= 2 ? "soon" : ""; };
+const Projects = { title: "프로젝트", list: [], async render(v) {
   if (!Local.ok) { v.innerHTML = `<div class="wrap"><h1 class="pg">프로젝트</h1><div class="note w">${svg("warn")}<div class="nb"><b>re-boot 콘솔.exe</b> 로 실행해야 합니다.</div></div></div>`; return; }
   v.innerHTML = `<div class="wrap wide"><div class="empty"><div class="eic">${svg("folder")}</div><b>불러오는 중…</b></div></div>`;
-  let list = [], runs = []; try { list = await Local.projects(true); if (Local.desktop) runs = (await Local.runsAll()).runs || []; } catch (e) {}
+  let list = []; try { list = await Local.projects(true); } catch (e) {}
+  await QueueUI.load();
   if (App.view !== "projects") return;
-  const busy = n => runs.find(r => r.name === n && r.running);
-  const stage = p => busy(p.name) ? ["AI 제작 중 " + (busy(p.name).pct || 0) + "%", "s-extend"] : p.tiles ? (p.exports ? ["전달", "s-approved"] : ["검수", "s-extend"]) : p.hasOrder ? ["제작 대기", "s-edit"] : p.hasBrief ? ["브리프", "s-hold"] : ["사진", "s-hold"];
-  v.innerHTML = `<div class="wrap wide">
-    <div class="vhead"><h1 class="pg">프로젝트 <span class="cntl">${list.length}</span></h1><div class="sp"></div>
-      ${Local.desktop ? `<button class="btn" data-act="openRoot">${svg("ext")} 폴더 열기</button>` : ""}<button class="btn" data-act="newproj">${svg("plus")} 새 프로젝트</button></div>
-    <p class="pgsub">카드를 누르면 열립니다. 새 프로젝트는 이름만 정하면 만들어지고, 사진은 안에서 넣습니다.</p>
-    ${!list.length ? `<div class="empty"><div class="eic">${svg("folder")}</div><b>아직 프로젝트가 없습니다</b><p>위의 <b>새 프로젝트</b>로 시작하세요.</p></div>` : `<div class="pgrid">${list.map((p, i) => {
-      const st = stage(p), cur = p.name === FS.name, span = p.tileFirst && p.tileLast ? p.tileLast - p.tileFirst : null;
-      return `<button class="pcard${cur ? " cur" : ""}" data-p="${esc(p.name)}" style="animation-delay:${i * 40}ms">
-        <div class="pch"><span class="pic">${svg("folder")}</span><span class="ptt"><b>${esc(p.name)}</b><small>${fmtAgo(p.mtime)} 작업 · 사진 ${p.images}장</small></span><i class="pst ${st[1]}">${st[0]}</i>${cur ? `<i class="pcur">열림</i>` : ""}</div>
-        <div class="pstat"><span><small>사진</small><b>${p.images}</b></span><span><small>타일</small><b>${p.tiles}</b></span><span><small>내보내기</small><b>${p.exports}</b></span><span><small>브리프</small><b>${p.hasBrief || p.hasOrder ? "✓" : "–"}</b></span></div>
-        <dl class="pkv"><dt>시작</dt><dd>${fmtD(p.ctime)}</dd><dt>최근 작업</dt><dd>${fmtD(p.mtime)}</dd><dt>타일 제작</dt><dd>${span != null ? `${fmtD(p.tileFirst)} → ${fmtDur(span)} 소요` : "—"}</dd></dl>
-        <div class="pgo">${cur ? "이어서 작업" : "열기"} ${svg("arrowR")}</div></button>`; }).join("")}</div>`}
+  this.list = list;
+  const board = Store.get("projView", "card") === "board";
+  v.innerHTML = `<div class="wrap wide${board ? " fullw" : ""}">
+    <div class="vhead"><h1 class="pg">프로젝트 <span class="cntl">${list.length}</span></h1>
+      <div class="seg" id="pvSeg"><button data-pv="card" class="${!board ? "on" : ""}">${svg("grid")} 카드</button><button data-pv="board" class="${board ? "on" : ""}">${svg("kanban")} 보드</button></div><div class="sp"></div>
+      ${Local.desktop ? `<button class="btn" data-act="timeline">${svg("history")} 작업 기록</button><button class="btn" data-act="openRoot">${svg("ext")} 폴더 열기</button>` : ""}<button class="btn" data-act="newproj">${svg("plus")} 새 프로젝트</button></div>
+    <div id="qbox">${QueueUI.html()}</div>
+    ${!list.length ? `<div class="empty"><div class="eic">${svg("folder")}</div><b>아직 프로젝트가 없습니다</b><p>위의 <b>새 프로젝트</b>로 시작하세요.</p></div>` : board ? this.board(list) : this.cards(list)}
   </div>`;
   v.onclick = async e => {
+    if (await QueueUI.click(e)) return;
+    const sv = e.target.closest("[data-pv]"); if (sv) { Store.set("projView", sv.dataset.pv); return go("projects"); }
     const a = e.target.closest("[data-act]"); if (a) return ACT[a.dataset.act]();
+    const pa = e.target.closest("[data-pact]"); if (pa) { const host = pa.closest("[data-p]"); if (host) this.pact(pa.dataset.pact, host.dataset.p); return; }
     const b = e.target.closest("[data-p]"); if (!b) return;
     if (b.dataset.p === FS.name) return go("home");
     b.classList.add("busy");
     if (await FS.load(b.dataset.p, false)) { UI.toast(`${FS.name} 열었습니다`, "o"); go("home"); } else b.classList.remove("busy");
   };
+  v.onkeydown = e => { if (e.key === "Enter" && e.target.matches && e.target.matches(".pcard,.kcard")) e.target.click(); };
+  /* 칸반: 끌어서 단계 옮기기 */
+  v.ondragstart = e => { const c = e.target.closest(".kcard"); if (!c) return; e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", c.dataset.p); } catch (x) {} this._drag = c.dataset.p; c.classList.add("drag"); };
+  v.ondragend = () => { this._drag = null; $$(".kcard.drag,.kcol.ov", v).forEach(x => x.classList.remove("drag", "ov")); };
+  v.ondragover = e => { const col = e.target.closest(".kcol"); if (!col || !this._drag) return; e.preventDefault(); $$(".kcol.ov", v).forEach(x => x !== col && x.classList.remove("ov")); col.classList.add("ov"); };
+  v.ondrop = e => { const col = e.target.closest(".kcol"); if (!col || !this._drag) return; e.preventDefault(); const nm = this._drag; this._drag = null; col.classList.remove("ov"); this.setStage(nm, col.dataset.col); };
   renderSide();
-}};
+},
+  st(p) { return p.running ? ["AI 제작 중 " + (p.pct || 0) + "%", "s-extend"] : [stageLabel(p.stage), STAGE_CLS[p.stage] || "s-hold"]; },
+  cards(list) {
+    return `<p class="pgsub">카드를 누르면 열립니다. <b>보드</b>로 바꾸면 단계별로 끌어 옮길 수 있고, <b>정보</b>에서 클라이언트·마감일을 적어두면 D-day 가 표시됩니다.</p><div class="pgrid">${list.map((p, i) => {
+      const st = this.st(p), cur = p.name === FS.name, span = p.tileFirst && p.tileLast ? p.tileLast - p.tileFirst : null, m = p.meta || {};
+      return `<div class="pcard${cur ? " cur" : ""}" role="button" tabindex="0" data-p="${esc(p.name)}" style="animation-delay:${i * 40}ms">
+        <div class="pch"><span class="pic">${p.cover ? `<img src="${p.cover}" alt="" loading="lazy">` : svg("folder")}</span><span class="ptt"><b>${esc(p.name)}</b><small>${m.client ? esc(m.client) + " · " : ""}${fmtAgo(p.mtime)} 작업 · 사진 ${p.images}장</small></span>${m.due ? `<i class="dd ${ddCls(m.due)}" title="마감 ${esc(m.due)}">${dday(m.due)}</i>` : ""}<i class="pst ${st[1]}">${st[0]}</i>${cur ? `<i class="pcur">열림</i>` : ""}</div>
+        ${p.running ? `<span class="kprog"><i style="width:${p.pct || 0}%"></i></span>` : ""}
+        <div class="pstat"><span><small>사진</small><b>${p.images}</b></span><span><small>타일</small><b>${p.tiles}</b></span><span><small>내보내기</small><b>${p.exports}</b></span><span><small>브리프</small><b>${p.hasBrief || p.hasOrder ? "✓" : "–"}</b></span></div>
+        <dl class="pkv"><dt>시작</dt><dd>${fmtD(p.ctime)}</dd><dt>최근 작업</dt><dd>${fmtD(p.mtime)}</dd><dt>타일 제작</dt><dd>${span != null ? `${fmtD(p.tileFirst)} → ${fmtDur(span)} 소요` : "—"}</dd>${m.memo ? `<dt>메모</dt><dd class="memo1">${esc(m.memo)}</dd>` : ""}</dl>
+        <div class="pfoot">${p.canResume && Local.desktop ? `<button class="btn sm" data-pact="resume" title="지난 AI 작업이 끝나지 않았습니다">${svg("refresh")} 이어서 하기</button>` : ""}<button class="btn sm ghost" data-pact="info">${svg("edit")} 정보</button>${Local.desktop ? `<button class="btn sm ghost" data-pact="log">${svg("history")} 기록</button>` : ""}<span class="sp"></span><span class="pgo">${cur ? "이어서 작업" : "열기"} ${svg("arrowR")}</span></div></div>`; }).join("")}</div>`;
+  },
+  board(list) {
+    return `<p class="pgsub">카드를 끌어 단계를 옮기세요. <b>제작 중</b>은 AI 작업이 돌 때 자동으로 들어가고, 작업이 진척되면(타일 생성·내보내기) 자동 단계가 다시 따라갑니다.</p>
+      <div class="kb">${STAGE_UI.map(([id, lb]) => { const ps = list.filter(p => p.stage === id); return `<div class="kcol k-${id}" data-col="${id}"><div class="kh"><b>${lb}</b><span class="cnt">${ps.length}</span></div><div class="kbody">${ps.map(p => this.kcard(p)).join("") || `<p class="kempty">여기로 끌어 놓기</p>`}</div></div>`; }).join("")}</div>`;
+  },
+  kcard(p) {
+    const m = p.meta || {};
+    return `<div class="kcard${p.name === FS.name ? " cur" : ""}" draggable="${p.running ? "false" : "true"}" tabindex="0" data-p="${esc(p.name)}">${p.cover ? `<img src="${p.cover}" alt="" loading="lazy">` : ""}<b>${esc(p.name)}</b><small>${m.client ? esc(m.client) : "클라이언트 미정"}${m.due ? ` · <i class="dd ${ddCls(m.due)}">${dday(m.due)}</i>` : ""}</small>${p.running ? `<span class="kprog"><i style="width:${p.pct || 0}%"></i></span>` : ""}${m.memo ? `<em>${esc(m.memo)}</em>` : ""}<span class="kact"><button class="ib" data-pact="info" title="정보">${svg("edit")}</button>${p.canResume && Local.desktop ? `<button class="ib" data-pact="resume" title="이어서 하기">${svg("refresh")}</button>` : ""}</span></div>`;
+  },
+  async pact(k, name) {
+    if (k === "resume") return ACT.resume(name);
+    if (k === "log") return ACT.timeline(name);
+    if (k === "info") return this.info(name);
+  },
+  async saveMeta(p, meta, logText) {
+    try { await Local.save(p.name, "project.json", JSON.stringify(meta, null, 2)); if (logText) Local.logAdd(p.name, "stage", logText); Local._projects = null; if (App.view === "projects") go("projects"); if (p.name === FS.name) FS.meta = meta; return true; }
+    catch (e) { UI.alert("저장하지 못했습니다", esc(e.message), "d"); return false; }
+  },
+  applyStage(p, meta, id) { if (!id || id === p.autoStage) { delete meta.stage; delete meta.stageAuto; } else { meta.stage = id; meta.stageAuto = p.autoStage; } meta.stageAt = new Date().toISOString(); },
+  async setStage(name, id) {
+    const p = this.list.find(x => x.name === name); if (!p || p.stage === id) return;
+    if (id === "making") return UI.toast("제작 중은 AI 작업이 돌 때 자동으로 들어갑니다", "w");
+    if (p.running) return UI.toast("AI 작업 중인 프로젝트는 옮길 수 없습니다", "w");
+    const meta = Object.assign({}, p.meta || {}); this.applyStage(p, meta, id);
+    if (await this.saveMeta(p, meta, `단계 → ${stageLabel(id)}`)) UI.toast(`${name} → ${stageLabel(id)}`, "o");
+  },
+  async info(name) {
+    const p = this.list.find(x => x.name === name) || { name, meta: FS.name === name ? FS.meta || {} : {}, stage: "", autoStage: "" }; const m = p.meta || {};
+    const v = await UI.dialog({ title: "프로젝트 정보", sub: esc(name), icon: "edit", tone: "b",
+      body: `<div class="row2"><div class="fld"><label>클라이언트</label><input type="text" id="piC" value="${esc(m.client || "")}" placeholder="예: 벤딕트 김대표"></div><div class="fld"><label>마감일</label><input type="date" id="piD" value="${esc(m.due || "")}"></div></div>
+        <div class="fld"><label>메모</label><textarea id="piM" placeholder="납품 채널, 수정 횟수, 연락 방법 등">${esc(m.memo || "")}</textarea></div>
+        ${p.autoStage ? `<div class="fld"><label>단계</label><select id="piS">${STAGE_UI.filter(([id]) => id !== "making").map(([id, lb]) => `<option value="${id}"${p.stage === id ? " selected" : ""}>${lb}${id === p.autoStage ? " (자동)" : ""}</option>`).join("")}</select><p class="hint" style="margin:4px 0 0">작업이 진척되면 자동 단계가 다시 따라갑니다. 납품 완료·보류는 직접 정하세요.</p></div>` : ""}`,
+      buttons: [{ label: "취소", value: 0 }, { label: "저장", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#piC", d).focus(), 60); } });
+    if (v !== 1) return;
+    const meta = Object.assign({}, m, { client: $("#piC").value.trim(), due: $("#piD").value, memo: $("#piM").value.trim() });
+    const sel = $("#piS") ? $("#piS").value : ""; let log = "";
+    if (sel && sel !== p.stage && !p.running) { this.applyStage(p, meta, sel); log = `단계 → ${stageLabel(sel)}`; }
+    if (await this.saveMeta(p, meta, log)) UI.toast("저장했습니다", "o");
+  }
+};
 
 /* ── 브리프 (사진 분석 포함) ── */
 const REQ = { product: ["name", "category"], target: ["who"], fact: ["specs"] };
@@ -611,6 +720,9 @@ const Brief = { title: "브리프", render(v) {
   bumpProgress();
 
   v.addEventListener("click", e => {
+    const ct = e.target.closest("[data-cut]"); if (ct) { Cut.act(ct.dataset.cut, ct.dataset.f); return; }
+    const rf = e.target.closest("[data-ref]"); if (rf) { Ref.act(rf.dataset.ref, rf.dataset.f); return; }
+    const lbx = e.target.closest("[data-lb]"); if (lbx) { UI.lightbox(lbx.dataset.lb); return; }
     const ap = e.target.closest("[data-apply]"); if (ap) { applySection(ap.dataset.apply); return; }
     const pv = e.target.closest("[data-prev]"); if (pv) { const i = SECTIONS.findIndex(x => x.id === pv.dataset.prev); if (i > 0) openCard(SECTIONS[i - 1].id); return; }
     const h = e.target.closest(".chead"); if (h) { toggleCard(h.parentElement); return; }
@@ -696,6 +808,7 @@ const BODY = {
         <dt>누끼 적합</dt><dd>${s.cuttable}장</dd>
         <dt>추출 포인트 컬러</dt><dd><i class="sw" style="background:${s.accent}"></i>${s.accent}</dd></dl>
       <div class="aisug" id="aisug">${Suggest.box()}</div>
+      <div id="pcut">${Cut.box()}</div>
       <div class="shots">${FS.analysis.map(shotCard).join("")}</div>`),
   product: (g, eg) => `<p class="hint">이것만 있어도 기획안 초안은 나옵니다.</p>
     <div class="row2"><div class="fld"><label>상품명</label><input type="text" data-k="product.name" value="${esc(g("product", "name"))}" placeholder="${esc(eg.name)}"></div>
@@ -725,7 +838,8 @@ const BODY = {
     CATALOG.forEach(c => { let grp = groups.find(x => x.g === c.g); if (!grp) groups.push(grp = { g: c.g, items: [] }); grp.items.push(c); });
     return `<p class="hint">체크된 순서대로 조립됩니다. 인트로와 가격·CTA는 뺄 수 없습니다. <b>⚠</b> 는 실제 자료가 있어야 만들 수 있는 섹션입니다.</p>
       <div data-multi="layout.sections">${groups.map(grp => `<div class="catgrp"><div class="catg">${esc(grp.g)}</div><div class="chips">
-        ${grp.items.map(c => `<label class="chip${c.lock ? " lock" : ""}" title="${esc(c.need || "")}"><input type="checkbox" value="${c.id}"${sel.includes(c.id) ? " checked" : ""}${c.lock ? " disabled" : ""}><span>${esc(c.label)}${c.need ? " ⚠" : ""}</span></label>`).join("")}</div></div>`).join("")}</div>`;
+        ${grp.items.map(c => `<label class="chip${c.lock ? " lock" : ""}" title="${esc(c.need || "")}"><input type="checkbox" value="${c.id}"${sel.includes(c.id) ? " checked" : ""}${c.lock ? " disabled" : ""}><span>${esc(c.label)}${c.need ? " ⚠" : ""}</span></label>`).join("")}</div></div>`).join("")}</div>
+      <div class="refbox" id="refbox">${Ref.box()}</div>`;
   }
 };
 function onFieldInput(e) {
@@ -770,27 +884,50 @@ function applySection(id) {
   $$(".card[data-sec]").forEach(x => x.classList.remove("open")); App.curSec = null; ACT.make();
 }
 
-/* ── 타일 (배율 · 스크롤 스파이 · 요청 배지) ── */
-const Tiles = { title: "타일", mode: "strip", zoom: null, _spyVw: null, _spyFn: null,
+/* ── 타일 (배율 · 스크롤 스파이 · 요청/오타/가독성 배지 · 모바일 프레임 · 장별 다시/추가) ── */
+const Tiles = { title: "타일", mode: Store.get("tileMode", "strip"), zoom: null, readOn: false, _spyVw: null, _spyFn: null,
   render(v) {
     if (!App.tiles.length) { v.innerHTML = `<div class="wrap"><div class="empty"><div class="eic">${svg("grid")}</div><b>아직 타일이 없습니다</b><p>브리프를 마치고 <b>AI로 상세페이지 만들기</b>를 누르면 여기에 들어옵니다.</p><button class="btn pri" data-act="gobrief">브리프로</button></div></div>`; v.onclick = e => { const a = e.target.closest("[data-act]"); if (a) ACT[a.dataset.act](); }; return; }
+    if (!["strip", "grid", "mobile"].includes(this.mode)) this.mode = "strip";
+    Store.set("tileMode", this.mode);
     this.zoom = this.zoom || Store.get("tileZoom", 100);
-    const strip = this.mode === "strip", t = App.tally();
+    const strip = this.mode === "strip", t = App.tally(), tyn = Typo.count();
     v.innerHTML = `<div class="wrap wide center">
       <div class="vhead">
         <h1 class="pg">타일 <span class="cntl">${App.tiles.length}</span></h1>
-        <div class="tally">${t.req ? `<span class="t-b">수정 요청 ${t.req}장</span><span class="t-c">영역 ${t.regions}</span>` : `<span class="t-d">요청 없음</span>`}</div>
+        <div class="tally">${t.req ? `<span class="t-b">수정 요청 ${t.req}장</span><span class="t-c">영역 ${t.regions}</span>` : `<span class="t-d">요청 없음</span>`}${tyn ? `<span class="t-y">오타 의심 ${tyn}</span>` : ""}</div>
         <div class="sp"></div>
         ${strip ? `<div class="zctl" title="Ctrl + 휠 · Ctrl + / − 로도 조절"><button data-z="-" aria-label="축소">−</button><input type="range" id="tz" min="25" max="200" value="${this.zoom}"><button data-z="+" aria-label="확대">+</button><b id="tzv">${this.zoom}%</b><button data-z="fit">맞춤</button><button data-z="100">100%</button></div>` : ""}
-        <div class="seg"><button class="${strip ? "on" : ""}" data-m="strip">${svg("layers")} 이어붙이기</button><button class="${!strip ? "on" : ""}" data-m="grid">${svg("grid")} 그리드</button></div>
+        <div class="seg"><button class="${strip ? "on" : ""}" data-m="strip">${svg("layers")} 이어붙이기</button><button class="${this.mode === "grid" ? "on" : ""}" data-m="grid">${svg("grid")} 그리드</button><button class="${this.mode === "mobile" ? "on" : ""}" data-m="mobile" title="M">${svg("mobile")} 모바일</button></div>
+        <button class="btn${this.readOn ? " act" : ""}" data-rd="1" title="모바일(390px)에서 글자 크기·배경 대비 검사">${svg("eye")} 가독성</button>
         <button class="btn" data-act="goreview">${svg("check")} 검수</button>
-        <button class="btn pri" data-act="exportPreview">${svg("eye")} 클라이언트 프리뷰</button>
+        <button class="btn pri" data-act="exportMenu">${svg("down")} 내보내기</button>
       </div>
+      ${this.readOn ? this.readSummary() : ""}
       <div id="tbox"></div></div>`;
-    const box = $("#tbox", v), badge = tl => { const rc = ((App.review[tl.n] || {}).regions || []).length; return App.hasReq(tl.n) ? `<i class="rb s-edit">수정 요청${rc ? " · 영역 " + rc : ""}</i>` : ""; };
-    if (!strip) {
+    const box = $("#tbox", v);
+    const badge = tl => {
+      const rc = ((App.review[tl.n] || {}).regions || []).length, b = [];
+      if (App.hasReq(tl.n)) b.push(`<i class="rb s-edit">수정 요청${rc ? " · 영역 " + rc : ""}</i>`);
+      const ty = Typo.of(tl); if (ty && ty.fresh && (ty.issues || []).length) b.push(`<i class="rb s-ty">오타 의심 ${ty.issues.length}</i>`);
+      if (this.readOn) { const ri = Read.issues(tl); if (ri && ri.length) b.push(`<i class="rb s-rd${ri.some(x => x.lv === "d") ? " d" : ""}">가독성 ${ri.length}</i>`); }
+      return b.length ? `<div class="rbs">${b.join("")}</div>` : "";
+    };
+    if (this.mode === "grid") {
       box.className = "tgrid";
-      box.innerHTML = App.tiles.map((tl, i) => `<div class="tcard" data-n="${esc(tl.n)}" data-src="${tl.f}" style="animation-delay:${i * 30}ms">${badge(tl)}<img src="${tl.f}" loading="lazy" alt=""><div class="cp"><b>${esc(tl.n)}. ${esc(tl.name)}</b><small>${esc(tl.copy || "")}</small></div></div>`).join("");
+      box.innerHTML = App.tiles.map((tl, i) => `<div class="tcard" data-n="${esc(tl.n)}" data-src="${tl.f}" style="animation-delay:${i * 30}ms">${badge(tl)}<img src="${tl.f}" loading="lazy" alt="">
+        <div class="tact"><button class="btn sm" data-tact="regen" data-n="${esc(tl.n)}" title="이 장만 다시">${svg("refresh")} 다시</button><button class="btn sm" data-tact="insert" data-n="${esc(tl.n)}" title="이 장 뒤에 1장 추가">${svg("plus")} 뒤에 추가</button></div>
+        <div class="cp"><b>${esc(tl.n)}. ${esc(tl.name)}</b><small>${esc(tl.copy || "")}</small></div></div>`).join("");
+    } else if (this.mode === "mobile") {
+      const pw = Store.get("phoneW", 390);
+      box.className = "phonewrap";
+      box.innerHTML = `<div class="phone" style="--pw:${pw}px"><div class="pnotch"></div><div class="pscr" id="pscr">${App.tiles.map(tl => `<div class="ptl" data-n="${esc(tl.n)}">${badge(tl)}<img src="${tl.f}" alt="${esc(tl.n)}"></div>`).join("")}</div></div>
+        <div class="pside"><h5>폰 화면 폭</h5><div class="seg" id="pwSeg">${[360, 390, 430].map(w => `<button data-pw="${w}" class="${w === pw ? "on" : ""}">${w}px</button>`).join("")}</div>
+          <p class="hint" style="margin-top:10px">실제 휴대폰 화면 폭(CSS px)으로 줄여 보여줍니다. 스크롤하며 글자가 읽히는지, 지루하게 긴 곳은 없는지 확인하세요. 장을 더블클릭하면 검수로 갑니다.</p>
+          <dl class="kv"><dt>전체 길이</dt><dd id="pLen">계산 중…</dd><dt>장 수</dt><dd>${App.tiles.length}장</dd></dl>
+          <button class="btn sm${this.readOn ? " act" : ""}" data-rd="1" style="margin-top:12px">${svg("eye")} 가독성 검사 ${this.readOn ? "끄기" : "켜기"}</button></div>`;
+      const calc = () => { const sc = $("#pscr"), L = $("#pLen"); if (!sc || !L) return; const H = sc.scrollHeight, vh = sc.clientHeight || 1; L.textContent = `${fmtNum(Math.round(H))}px · 화면 약 ${Math.max(1, Math.round(H / vh))}번 넘김`; };
+      $$("#pscr img", v).forEach(im => im.addEventListener("load", calc)); setTimeout(calc, 300);
     } else {
       box.className = "strip";
       box.innerHTML = `<div class="pg" id="tpg" style="width:${this.px()}px">${App.tiles.map(tl =>
@@ -798,16 +935,24 @@ const Tiles = { title: "타일", mode: "strip", zoom: null, _spyVw: null, _spyFn
       this.spy(v);
       $("#view").addEventListener("wheel", e => { if (!e.ctrlKey) return; e.preventDefault(); this.zoomAt(this.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientY); }, { passive: false });
       const sl = $("#tz", v); if (sl) sl.oninput = () => this.zoomAt(+sl.value);
-      if (App.curTile) { const t = $(`.tl[data-n="${CSS.escape(App.curTile)}"]`, v); if (t) setTimeout(() => t.scrollIntoView({ block: "start" }), 60); }
+      if (App.curTile) { const tt = $(`.tl[data-n="${CSS.escape(App.curTile)}"]`, v); if (tt) setTimeout(() => tt.scrollIntoView({ block: "start" }), 60); }
     }
     v.onclick = e => {
+      const ta = e.target.closest("[data-tact]"); if (ta) { e.stopPropagation(); return ACT.tileRun(ta.dataset.n, ta.dataset.tact); }
+      const rd = e.target.closest("[data-rd]"); if (rd) return this.toggleRead();
+      const pw = e.target.closest("[data-pw]"); if (pw) { Store.set("phoneW", +pw.dataset.pw); return go("tiles"); }
       const z = e.target.closest("[data-z]"); if (z) { const k = z.dataset.z; this.zoomAt(k === "+" ? this.zoom * 1.15 : k === "-" ? this.zoom / 1.15 : k === "100" ? 100 : this.fit()); return; }
       const m = e.target.closest("[data-m]"); if (m) { this.mode = m.dataset.m; go("tiles"); return; }
       const a = e.target.closest("[data-act]"); if (a) { ACT[a.dataset.act](); return; }
       const c = e.target.closest(".tcard[data-src]"); if (c) { App.curTile = c.dataset.n; go("review"); return; }
-      const tl = e.target.closest(".strip .tl"); if (tl && e.detail === 2) { App.curTile = tl.dataset.n; go("review"); }
+      const tl = e.target.closest(".strip .tl, .ptl"); if (tl && e.detail === 2) { App.curTile = tl.dataset.n; go("review"); }
     };
   },
+  readSummary() {
+    let d = 0, w = 0, nt = 0; App.tiles.forEach(t => { const ri = Read.issues(t) || []; if (ri.length) nt++; ri.forEach(x => x.lv === "d" ? d++ : w++); });
+    return `<div class="note ${nt ? "w" : "o"}">${svg(nt ? "warn" : "check")}<div class="nb"><b>모바일 가독성</b> — ${nt ? `${nt}장에서 읽기 어려운 글자 ${d + w}줄 (심각 ${d})` : "모든 장이 기준을 넘습니다"} · 기준: 390px 폭에서 글자 ${SET.readPx}px · 대비 ${SET.readContrast}:1 (설정에서 변경). ${nt ? "배지가 붙은 장을 누르면 검수에서 위치를 보고 한 번에 요청으로 넣을 수 있습니다." : ""}</div></div>`;
+  },
+  async toggleRead() { this.readOn = !this.readOn; Review.showRead = this.readOn; if (this.readOn) { UI.toast("글자 위치를 읽는 중… (Windows OCR · 무료)"); await Read.all(); } if (App.view === "tiles") go("tiles"); },
   px() { return Math.round(SET.baseW * this.zoom / 100); },
   fit() { const vw = $("#view"); return vw ? clamp(Math.floor((vw.clientWidth - 64) / SET.baseW * 100), 25, 200) : 100; },
   zoomAt(z, anchorY) {
@@ -841,9 +986,9 @@ const Tiles = { title: "타일", mode: "strip", zoom: null, _spyVw: null, _spyFn
   unspy() { if (this._spyVw && this._spyFn) this._spyVw.removeEventListener("scroll", this._spyFn); this._spyVw = this._spyFn = null; }
 };
 
-/* ── 검수 (영역 코멘트 뷰어) ── */
+/* ── 검수 (영역 코멘트 · 글자 수정 · 오타/가독성 자동 검사 · 버전) ── */
 const QUICK = ["문구를 바꿔줘", "폰트를 더 굵게", "글자 크기 키워줘", "색 톤을 낮춰줘", "여백을 더 줘", "숫자 강조를 키워줘", "사진을 바꿔줘", "배지 스타일 바꿔줘", "배경을 밝게"];
-const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null, _ro: null, drawing: false, _rect: null, hi: -1,
+const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null, _ro: null, drawing: false, drawKind: "area", _rect: null, hi: -1, showTypo: true, showRead: false,
   render(v) {
     if (!App.tiles.length) { v.innerHTML = `<div class="wrap"><div class="empty"><div class="eic">${svg("check")}</div><b>검수할 타일이 없습니다</b><p>타일이 생성되면 여기서 영역을 잡아 수정 요청을 남깁니다.</p></div></div>`; return; }
     if (App.curTile) { const i = App.tiles.findIndex(t => t.n === App.curTile); if (i >= 0) this.cur = i; }
@@ -851,30 +996,48 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
     v.innerHTML = `<div class="rv">
       <div class="rv-stage" id="rvStage">
         <div class="rv-can" id="rvCan"><img id="rvImg" alt="" draggable="false"><div class="rv-ann" id="rvAnn"></div></div>
-        <div class="rv-tools"><button class="btn pri" id="rvDraw" title="D">${svg("plus")} 영역 잡기</button><span class="hint" id="rvHint">이미지 위를 끌어 영역을 잡고 코멘트를 적으세요. 한 장에 여러 개 가능.</span></div>
+        <div class="rv-tools"><button class="btn pri" id="rvDraw" title="D">${svg("plus")} 영역 잡기</button><button class="btn" id="rvText" title="T — 바꿀 글자를 끌어 선택">${svg("type")} 글자 수정</button><span class="rv-sep"></span>
+          <button class="btn sm" id="rvTypo" title="AI 오타 자동 검사">${svg("spell")} 오타 검사</button><button class="btn sm${this.showRead ? " act" : ""}" id="rvRead" title="모바일 글자 크기·대비">${svg("eye")} 가독성</button></div>
+        <p class="rv-hint2" id="rvHint"></p>
         <div class="zctl float"><button data-z="-" aria-label="축소">−</button><b id="rvZ">100%</b><button data-z="+" aria-label="확대">+</button><button data-z="fit">맞춤</button><button data-z="100">100%</button></div>
-        <p class="rvhint">휠 확대·축소 · 드래그 이동 · 더블클릭 맞춤 ↔ 100% · <kbd>D</kbd> 영역 잡기</p>
+        <p class="rvhint">휠 확대·축소 · 드래그 이동 · 더블클릭 맞춤 ↔ 100% · <kbd>D</kbd> 영역 · <kbd>T</kbd> 글자 · <kbd>?</kbd> 단축키</p>
       </div>
       <div class="rv-side">
         <div class="rvh"><span class="rvn" id="rvN"></span><h3 id="rvT"></h3></div><p id="rvS" class="rvsub"></p>
-        <div class="fld"><label>영역 코멘트 <span class="opt" id="rvCnt"></span></label><div class="rgl" id="rgl"></div></div>
+        <div id="rvChk"></div>
+        <div class="fld"><label>영역 코멘트 · 글자 교체 <span class="opt" id="rvCnt"></span></label><div class="rgl" id="rgl"></div></div>
         <div class="fld"><label>이 장 전체에 대한 요청 <span class="opt">선택</span></label><textarea id="rvNote" placeholder="영역과 무관한 요청. 예: 전체적으로 여백을 더 주고 배경을 조금 밝게"></textarea>
           <div class="ghostchips">${QUICK.map(q => `<button data-q="${q}">${q}</button>`).join("")}</div></div>
         <div class="rvnav"><button class="btn" id="rvPrev">← 이전</button><button class="btn" id="rvNextU" title="다음 요청 없는 장">${svg("flag")} 다음 미검수</button><button class="btn pri" id="rvNext">다음 →</button></div>
-        <p class="hint"><kbd>←</kbd> <kbd>→</kbd> 이동 · <kbd>D</kbd> 영역 · <kbd>Del</kbd> 선택 영역 삭제</p>
-        <div class="rvfoot"><button class="btn" data-act="gotiles">${svg("grid")} 타일에서 보기</button><button class="btn pri blk" data-act="revise">${svg("sparkles")} 검수 반영 — AI 수정 실행</button><p class="hint" style="margin:6px 0 0">영역과 코멘트를 그대로 넘겨 <b>해당 부분만</b> 고칩니다. 톤앤매너는 유지됩니다.</p></div>
+        <div class="rvsec"><h5>이 장</h5><div class="rvbtns"><button class="btn sm" data-tact="regen">${svg("refresh")} 이 장만 다시</button><button class="btn sm" data-tact="insert">${svg("plus")} 뒤에 1장 추가</button></div></div>
+        <div class="rvsec" id="rvVer"></div>
+        <div class="rvfoot"><div class="rvbtns"><button class="btn" data-act="gotiles">${svg("grid")} 타일에서 보기</button><button class="btn" data-act="feedback">${svg("inbox")} 피드백 붙여넣기</button></div><button class="btn pri blk" data-act="revise">${svg("sparkles")} 검수 반영 — AI 수정 실행</button><p class="hint" style="margin:6px 0 0">영역·글자 교체를 그대로 넘겨 <b>해당 부분만</b> 고칩니다. 톤앤매너는 유지되고, 고치기 전 버전은 자동 백업됩니다.</p></div>
       </div></div>`;
     $("#rvNote", v).addEventListener("input", () => { this.rec().note = $("#rvNote", v).value; this.cap(); });
     $$(".ghostchips [data-q]", v).forEach(b => b.onclick = () => { const ta = $("#rvNote", v); ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, "") + "\n" : "") + b.dataset.q; ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); });
     $("#rvPrev", v).onclick = () => this.go(this.cur - 1);
     $("#rvNext", v).onclick = () => this.go(this.cur + 1);
     $("#rvNextU", v).onclick = () => { const i = App.tiles.findIndex((t, k) => k > this.cur && !App.hasReq(t.n)); if (i < 0) return UI.toast("뒤에 미검수 장이 없습니다", "o"); this.go(i); };
-    v.onclick = e => { const a = e.target.closest("[data-act]"); if (a) ACT[a.dataset.act](); };
-    $("#rvDraw", v).onclick = () => this.setDraw(!this.drawing);
+    v.onclick = e => {
+      const a = e.target.closest("[data-act]"); if (a) return ACT[a.dataset.act]();
+      const ta = e.target.closest("[data-tact]"); if (ta) return ACT.tileRun(App.tiles[this.cur].n, ta.dataset.tact);
+      const vr = e.target.closest("[data-ver]"); if (vr) return Versions.compare(App.tiles[this.cur], +vr.dataset.ver);
+      const fx = e.target.closest("[data-fix]"); if (fx) return this.addFix(fx.dataset.fix);
+      const rt = e.target.closest("[data-retypo]"); if (rt) return Typo.run();
+    };
+    $("#rvDraw", v).onclick = () => this.setDraw(!(this.drawing && this.drawKind === "area"), "area");
+    $("#rvText", v).onclick = () => this.setDraw(!(this.drawing && this.drawKind === "text"), "text");
+    $("#rvTypo", v).onclick = () => { const t = App.tiles[this.cur], r = Typo.of(t); if (!r || !r.fresh) return Typo.run(); this.showTypo = !this.showTypo; this.refresh(); UI.toast(this.showTypo ? "오타 표시를 켰습니다" : "오타 표시를 껐습니다"); };
+    $("#rvRead", v).onclick = async () => { this.showRead = !this.showRead; $("#rvRead").classList.toggle("act", this.showRead); if (this.showRead) { const t = App.tiles[this.cur]; this.chk(); await Read.doc(t); if (App.tiles[this.cur] !== t) return; } this.refresh(); };
+    Typo.paintBtn();
 
     /* 영역 목록 */
     const L = $("#rgl", v);
-    L.addEventListener("input", e => { const t = e.target.closest("textarea[data-ri]"); if (!t) return; const r = this.rec(); if (r.regions[+t.dataset.ri]) { r.regions[+t.dataset.ri].text = t.value; this.cap(); } });
+    L.addEventListener("input", e => {
+      const t = e.target.closest("textarea[data-ri],input[data-ri]"); if (!t) return; const r = this.rec(), g = r.regions[+t.dataset.ri]; if (!g) return;
+      if (t.dataset.f) { g[t.dataset.f] = t.value; g.text = `글자 교체: "${g.from || ""}" → "${g.to || ""}"`; } else g.text = t.value;
+      this.cap();
+    });
     L.addEventListener("click", e => { const d = e.target.closest("[data-del]"); if (d) { this.rec().regions.splice(+d.dataset.del, 1); this.hi = -1; this.cap(); this.paint(); this.list(); return; } const it = e.target.closest(".rgi"); if (it) { this.hi = +it.dataset.ri; this.paint(); } });
     L.addEventListener("mouseover", e => { const it = e.target.closest(".rgi"); if (it) { this.hi = +it.dataset.ri; this.paint(); } });
 
@@ -892,7 +1055,11 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
     };
     st.onpointerup = st.onpointercancel = () => {
       if (this._rect) { const r = this._rect; this._rect = null; const x = Math.min(r.x0, r.x1), y = Math.min(r.y0, r.y1), w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
-        if (w > .01 && h > .01) { const rec = this.rec(); rec.regions.push({ x: +x.toFixed(4), y: +y.toFixed(4), w: +w.toFixed(4), h: +h.toFixed(4), text: "" }); this.hi = rec.regions.length - 1; this.cap(); this.list(); const ta = $(`#rgl textarea[data-ri="${this.hi}"]`); if (ta) ta.focus(); }
+        if (w > .01 && h > .005) {
+          const rec = this.rec(), box = { x: +x.toFixed(4), y: +y.toFixed(4), w: +w.toFixed(4), h: +h.toFixed(4) };
+          if (this.drawKind === "text") { const g = Object.assign(box, { kind: "text", from: "", to: "", text: "" }); rec.regions.push(g); this.hi = rec.regions.length - 1; this.cap(); this.list(); this.guess(g, App.tiles[this.cur]); }
+          else { rec.regions.push(Object.assign(box, { text: "" })); this.hi = rec.regions.length - 1; this.cap(); this.list(); const ta = $(`#rgl textarea[data-ri="${this.hi}"]`); if (ta) ta.focus(); }
+        }
         this.paint(); return; }
       this._drag = null; st.classList.remove("grab");
     };
@@ -900,9 +1067,36 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
     $(".zctl", st).onclick = e => { const b = e.target.closest("[data-z]"); if (!b) return; const k = b.dataset.z; if (k === "fit") return this.layout(true); this.zoomTo(k === "+" ? this.s * 1.15 : k === "-" ? this.s / 1.15 : 1); };
     if (this._ro) this._ro.disconnect();
     this._ro = new ResizeObserver(() => this.layout(false)); this._ro.observe(st);
+    this.setDraw(false);
     this.go(this.cur);
   },
-  setDraw(on) { this.drawing = on; const b = $("#rvDraw"), st = $("#rvStage"); if (b) { b.classList.toggle("pri", !on); b.classList.toggle("dgr", on); b.innerHTML = on ? svg("x") + " 영역 잡기 끝" : svg("plus") + " 영역 잡기"; } if (st) st.classList.toggle("draw", on); },
+  setDraw(on, kind) {
+    this.drawing = on; if (kind) this.drawKind = kind;
+    const a = $("#rvDraw"), t = $("#rvText"), st = $("#rvStage"), h = $("#rvHint");
+    const onA = on && this.drawKind === "area", onT = on && this.drawKind === "text";
+    if (a) { a.classList.toggle("pri", !onA); a.classList.toggle("dgr", onA); a.innerHTML = onA ? svg("x") + " 영역 잡기 끝" : svg("plus") + " 영역 잡기"; }
+    if (t) { t.classList.toggle("act", onT); t.innerHTML = onT ? svg("x") + " 글자 수정 끝" : svg("type") + " 글자 수정"; }
+    if (st) { st.classList.toggle("draw", on); st.classList.toggle("drawtx", onT); }
+    if (h) h.textContent = !on ? "영역 잡기(D) — 고칠 곳을 끌어 표시 · 글자 수정(T) — 바꿀 문구를 끌어 선택하면 원래 글자를 자동으로 읽어 채웁니다" : onT ? "바꿀 글자 위를 끌어 선택하세요 — 원래 글자를 자동으로 읽습니다 (Esc 끝)" : "이미지 위를 끌어 영역을 잡고 코멘트를 적으세요. 한 장에 여러 개 가능 (Esc 끝)";
+    if (onT) Read.doc(App.tiles[this.cur]);
+  },
+  /* 글자 수정: 끌어 잡은 영역 안의 글자를 OCR(+오타 검사에서 AI 가 읽은 글자)로 채운다 */
+  async guess(g, t) {
+    const doc = await Read.doc(t); let txt = "", sure = false;
+    if (doc) {
+      const ty = Typo.of(t), read = ty && ty.fresh ? (ty.read || {}) : {};
+      const X0 = g.x * doc.w, Y0 = g.y * doc.h, X1 = (g.x + g.w) * doc.w, Y1 = (g.y + g.h) * doc.h, inside = (x, y, w, h) => x + w / 2 >= X0 && x + w / 2 <= X1 && y + h / 2 >= Y0 && y + h / 2 <= Y1;
+      const lines = doc.lines.filter(l => (l.words || []).some(w => inside(w.x, w.y, w.w, w.h))).sort((a, b) => a.y - b.y);
+      const parts = lines.map(l => { const ws = (l.words || []).filter(w => inside(w.x, w.y, w.w, w.h)); const full = ws.length === (l.words || []).length; if (full && read[l.id]) { sure = true; return read[l.id]; } return ws.map(w => w.t).join(" "); });
+      txt = parts.filter(Boolean).join("\n");
+    }
+    const rec = this.rec(); if (!rec.regions.includes(g)) return;
+    if (!g.from) g.from = txt;
+    g.auto = sure ? "ai" : txt ? "ocr" : "none";
+    g.text = `글자 교체: "${g.from}" → "${g.to || ""}"`;
+    this.cap(); this.list();
+    const i = rec.regions.indexOf(g), inp = $(`#rgl [data-ri="${i}"][data-f="${g.from ? "to" : "from"}"]`); if (inp) inp.focus();
+  },
   imgPt(e, clampIt) { const img = $("#rvImg"); if (!img) return null; const r = img.getBoundingClientRect(); let x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height; if (clampIt) { x = clamp(x, 0, 1); y = clamp(y, 0, 1); } return { x, y }; },
   rec() { const t = App.tiles[this.cur]; const r = App.review[t.n]; if (!r || !Array.isArray(r.regions)) App.review[t.n] = { regions: (r && r.regions) || [], note: (r && r.note) || "" }; return App.review[t.n]; },
   go(i) {
@@ -912,27 +1106,69 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
     $("#rvN").textContent = t.n; $("#rvT").textContent = t.name || "타일"; $("#rvS").textContent = t.copy || "";
     $("#rvNote").value = r.note || "";
     $("#rvPrev").disabled = this.cur === 0; $("#rvNext").disabled = this.cur === App.tiles.length - 1;
-    this.list(); this.paint();
+    this.list(); this.paint(); this.chk(); this.ver();
+    if (this.showRead || (this.drawing && this.drawKind === "text")) Read.doc(t).then(() => { if (App.tiles[this.cur] === t) { this.paint(); this.chk(); } });
     renderSide(); const cur = $("#sideBody .sitem.on"); if (cur) cur.scrollIntoView({ block: "nearest" });
   },
+  refresh() { if (!$("#rvAnn")) return; this.paint(); this.chk(); this.ver(); Typo.paintBtn(); renderSide(); },
   list() {
     const L = $("#rgl"); if (!L) return; const r = this.rec();
-    $("#rvCnt").textContent = r.regions.length ? `${r.regions.length}개` : "없음";
-    L.innerHTML = r.regions.length ? r.regions.map((g, i) => `<div class="rgi${i === this.hi ? " hi" : ""}" data-ri="${i}"><span class="rgn">${i + 1}</span><textarea data-ri="${i}" placeholder="이 영역을 어떻게 바꿀까요? 예: 숫자를 130%로, 글씨 더 굵게">${esc(g.text)}</textarea><button class="rgx" data-del="${i}" title="삭제">${svg("x")}</button></div>`).join("")
-      : `<p class="hint" style="margin:4px 0 0"><b>영역 잡기</b>를 누르고 이미지 위를 끌어보세요.</p>`;
+    const nt = r.regions.filter(g => g.kind === "text").length;
+    $("#rvCnt").textContent = r.regions.length ? `${r.regions.length}개${nt ? ` (글자 ${nt})` : ""}` : "없음";
+    L.innerHTML = r.regions.length ? r.regions.map((g, i) => g.kind === "text"
+      ? `<div class="rgi tx${i === this.hi ? " hi" : ""}" data-ri="${i}"><span class="rgn">T${i + 1}</span><div class="rgt"><label>원래 글자 ${g.auto === "ocr" ? `<small class="w">자동 인식 — 틀릴 수 있어요, 확인해 주세요</small>` : g.auto === "ai" ? `<small>AI 가 읽은 글자</small>` : g.auto === "none" ? `<small class="w">글자를 못 읽었습니다 — 직접 적어주세요</small>` : ""}</label><textarea data-ri="${i}" data-f="from" rows="${clamp(String(g.from || "").split("\n").length, 1, 4)}" placeholder="이미지에 적힌 그대로">${esc(g.from || "")}</textarea><label>바꿀 글자</label><textarea data-ri="${i}" data-f="to" rows="${clamp(String(g.from || "").split("\n").length, 1, 4)}" placeholder="새 문구 — 적은 그대로 들어갑니다 (줄바꿈 가능)">${esc(g.to || "")}</textarea></div><button class="rgx" data-del="${i}" title="삭제">${svg("x")}</button></div>`
+      : `<div class="rgi${i === this.hi ? " hi" : ""}" data-ri="${i}"><span class="rgn">${i + 1}</span><textarea data-ri="${i}" placeholder="이 영역을 어떻게 바꿀까요? 예: 숫자를 130%로, 글씨 더 굵게">${esc(g.text)}</textarea><button class="rgx" data-del="${i}" title="삭제">${svg("x")}</button></div>`).join("")
+      : `<p class="hint" style="margin:4px 0 0"><b>영역 잡기</b>로 고칠 곳을, <b>글자 수정</b>으로 바꿀 문구를 끌어 선택하세요.</p>`;
   },
   paint() {
-    const A = $("#rvAnn"); if (!A) return; const r = this.rec();
-    let h = r.regions.map((g, i) => `<div class="rg${i === this.hi ? " hi" : ""}" style="left:${g.x * 100}%;top:${g.y * 100}%;width:${g.w * 100}%;height:${g.h * 100}%"><b>${i + 1}</b></div>`).join("");
-    if (this._rect) { const q = this._rect; h += `<div class="rg tmp" style="left:${Math.min(q.x0, q.x1) * 100}%;top:${Math.min(q.y0, q.y1) * 100}%;width:${Math.abs(q.x1 - q.x0) * 100}%;height:${Math.abs(q.y1 - q.y0) * 100}%"></div>`; }
+    const A = $("#rvAnn"); if (!A) return; const r = this.rec(), t = App.tiles[this.cur];
+    const pos = g => `left:${g.x * 100}%;top:${g.y * 100}%;width:${g.w * 100}%;height:${g.h * 100}%`;
+    let h = "";
+    if (this.showTypo) { const ty = Typo.of(t); if (ty && ty.fresh) (ty.issues || []).forEach(is => { if (is.box) h += `<div class="rg ty" style="${pos(grow(is.box, .2))}" title="${esc(is.found)} → ${esc(is.fix)}"><b>!</b></div>`; }); }
+    if (this.showRead) { const ri = Read.issues(t) || []; ri.forEach(x => { h += `<div class="rg rd ${x.lv}" style="${pos(grow(x.box, .15))}"><em>${esc(Read.label(x))}</em></div>`; }); }
+    h += r.regions.map((g, i) => `<div class="rg${g.kind === "text" ? " tx" : ""}${i === this.hi ? " hi" : ""}" style="${pos(g)}"><b>${g.kind === "text" ? "T" : ""}${i + 1}</b></div>`).join("");
+    if (this._rect) { const q = this._rect; h += `<div class="rg tmp${this.drawKind === "text" ? " tx" : ""}" style="left:${Math.min(q.x0, q.x1) * 100}%;top:${Math.min(q.y0, q.y1) * 100}%;width:${Math.abs(q.x1 - q.x0) * 100}%;height:${Math.abs(q.y1 - q.y0) * 100}%"></div>`; }
     A.innerHTML = h;
     $$(".rgi", $("#rgl")).forEach(x => x.classList.toggle("hi", +x.dataset.ri === this.hi));
   },
+  /* 자동 검사 결과(오타 · 가독성) — 한 번에 요청으로 넣기 */
+  chk() {
+    const B = $("#rvChk"); if (!B) return; const t = App.tiles[this.cur]; let h = "";
+    const ty = Typo.of(t);
+    if (Typo.running) h += `<div class="note i">${svg("refresh", "spin")}<div class="nb">AI 가 오타를 검사하는 중입니다…</div></div>`;
+    else if (ty && !ty.fresh) h += `<div class="note w">${svg("info")}<div class="nb">이 장은 오타 검사 뒤에 바뀌었습니다. <button class="btn sm" data-retypo="1">다시 검사</button></div></div>`;
+    else if (ty && this.showTypo) {
+      const is = ty.issues || [];
+      h += is.length ? `<div class="chk ty"><h5>${svg("spell")} 오타 의심 ${is.length}건 <span class="sp"></span>${is.length > 1 ? `<button class="btn sm ghost" data-fix="ty:all">모두 넣기</button>` : ""}</h5>${is.map((x, i) => `<div class="iss"><span><s>${esc(x.found)}</s> → <b>${esc(x.fix)}</b><small>${esc(x.why)}${x.box ? "" : " · 위치 못 찾음"}</small></span><button class="btn sm" data-fix="ty:${i}">요청에 넣기</button></div>`).join("")}</div>`
+        : `<p class="chkok">${svg("check")} 오타 검사: 이상 없음</p>`;
+    }
+    if (this.showRead) {
+      const ri = Read.issues(t);
+      h += ri == null ? `<p class="hint">가독성: 글자 위치를 읽는 중…</p>` : ri.length ? `<div class="chk rd"><h5>${svg("eye")} 모바일 가독성 ${ri.length}줄 <span class="sp"></span>${ri.length > 1 ? `<button class="btn sm ghost" data-fix="rd:all">모두 넣기</button>` : ""}</h5>${ri.map((x, i) => `<div class="iss ${x.lv}"><span><b>${esc(String(x.text).slice(0, 26))}</b><small>${esc(Read.label(x))}</small></span><button class="btn sm" data-fix="rd:${i}">요청에 넣기</button></div>`).join("")}</div>`
+        : `<p class="chkok">${svg("check")} 가독성: 기준(글자 ${SET.readPx}px · 대비 ${SET.readContrast}:1) 통과</p>`;
+    }
+    B.innerHTML = h;
+  },
+  addFix(key) {
+    const [k, idx] = key.split(":"), t = App.tiles[this.cur], rec = this.rec(); let n = 0;
+    if (k === "ty") {
+      const is = (Typo.of(t) || {}).issues || [], list = idx === "all" ? is : [is[+idx]].filter(Boolean);
+      list.forEach(x => { if (rec.regions.some(g => g.kind === "text" && g.from === x.found && g.to === x.fix)) return; const text = `글자 교체: "${x.found}" → "${x.fix}"`;
+        if (x.box) rec.regions.push(Object.assign(grow(x.box), { kind: "text", from: x.found, to: x.fix, text, auto: "ai" })); else rec.note = (rec.note ? rec.note.replace(/\s+$/, "") + "\n" : "") + text; n++; });
+    } else if (k === "rd") {
+      const ri = Read.issues(t) || [], list = idx === "all" ? ri : [ri[+idx]].filter(Boolean);
+      list.forEach(x => { const text = Read.request(x); if (rec.regions.some(g => g.text === text)) return; rec.regions.push(Object.assign(grow(x.box, .3), { text })); n++; });
+    }
+    $("#rvNote").value = rec.note || "";
+    this.cap(); this.list(); this.paint();
+    UI.toast(n ? `요청 ${n}건을 넣었습니다` : "이미 넣은 항목입니다", n ? "o" : "w");
+  },
+  ver() { const B = $("#rvVer"); if (B) B.innerHTML = Versions.html(App.tiles[this.cur]); },
   layout(fit) {
     const st = $("#rvStage"), img = $("#rvImg"); if (!st || !img || !img.naturalWidth) return;
-    const W = st.clientWidth - 48, H = st.clientHeight - 88;
+    const W = st.clientWidth - 48, H = st.clientHeight - 110;
     this.fitS = Math.min(W / img.naturalWidth, H / img.naturalHeight, 1);
-    if (fit) { this.s = this.fitS; this.x = 0; this.y = 0; }
+    if (fit) { this.s = this.fitS; this.x = 0; this.y = 12; }
     this.apply();
   },
   apply() { const can = $("#rvCan"); if (!can) return; can.style.transform = `translate(${this.x}px,${this.y}px) scale(${this.s})`; can.style.setProperty("--s", this.s); const z = $("#rvZ"); if (z) z.textContent = Math.round(this.s * 100) + "%"; },
@@ -946,7 +1182,7 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
   },
   _svT: 0,
   cap() { App.saveReview(); renderSide(); clearTimeout(this._svT); this._svT = setTimeout(() => FS.saveReviewFile(), 900); },
-  /* 영역을 빨간 번호 박스로 그린 PNG → review/NN_marked.png (AI 가 영역을 정확히 알아보게) */
+  /* 영역을 빨간 번호 박스로 그린 PNG → review/NN_marked.png (AI 가 영역을 정확히 알아보게). 글자 교체는 파란 T 번호 */
   async buildMarked(tile) {
     const r = App.review[tile.n]; if (!r || !r.regions || !r.regions.length) return null;
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tile.f; });
@@ -954,11 +1190,11 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
     const x = c.getContext("2d"); x.drawImage(img, 0, 0);
     const lw = Math.max(6, Math.round(c.width * .005)), fs = Math.max(28, Math.round(c.width * .035));
     r.regions.forEach((g, i) => {
-      const X = g.x * c.width, Y = g.y * c.height, W = g.w * c.width, H = g.h * c.height;
-      x.fillStyle = "rgba(255,45,45,.14)"; x.fillRect(X, Y, W, H);
-      x.strokeStyle = "#FF2D2D"; x.lineWidth = lw; x.strokeRect(X, Y, W, H);
-      const R = fs * .75; x.beginPath(); x.arc(X + R * .9, Y + R * .9, R, 0, Math.PI * 2); x.fillStyle = "#FF2D2D"; x.fill();
-      x.fillStyle = "#fff"; x.font = `bold ${fs}px Pretendard, Arial, sans-serif`; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(String(i + 1), X + R * .9, Y + R * .95);
+      const X = g.x * c.width, Y = g.y * c.height, W = g.w * c.width, H = g.h * c.height, col = g.kind === "text" ? "#2F6BFF" : "#FF2D2D", lab = (g.kind === "text" ? "T" : "") + (i + 1);
+      x.fillStyle = g.kind === "text" ? "rgba(47,107,255,.12)" : "rgba(255,45,45,.14)"; x.fillRect(X, Y, W, H);
+      x.strokeStyle = col; x.lineWidth = lw; x.strokeRect(X, Y, W, H);
+      const R = fs * (lab.length > 1 ? .9 : .75); x.beginPath(); x.arc(X + R * .9, Y + R * .9, R, 0, Math.PI * 2); x.fillStyle = col; x.fill();
+      x.fillStyle = "#fff"; x.font = `bold ${fs}px Pretendard, Arial, sans-serif`; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(lab, X + R * .9, Y + R * .95);
     });
     const blob = await new Promise(res => c.toBlob(res, "image/png"));
     const file = `review/${tile.n}_marked.png`;
@@ -968,10 +1204,12 @@ const Review = { title: "검수", cur: 0, s: 1, x: 0, y: 0, fitS: 1, _drag: null
 };
 document.addEventListener("keydown", e => {
   if (App.view !== "review" || !App.tiles.length) return;
-  if (/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName) || $(".ovl.on") || $(".lbx.on")) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) || $(".ovl.on") || $(".lbx.on")) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
   if (e.key === "ArrowLeft") Review.go(Review.cur - 1);
   if (e.key === "ArrowRight" || e.key === "Enter") Review.go(Review.cur + 1);
-  if (e.key === "d" || e.key === "D") Review.setDraw(!Review.drawing);
+  if (e.key === "d" || e.key === "D") Review.setDraw(!(Review.drawing && Review.drawKind === "area"), "area");
+  if (e.key === "t" || e.key === "T") Review.setDraw(!(Review.drawing && Review.drawKind === "text"), "text");
   if (e.key === "Escape" && Review.drawing) Review.setDraw(false);
   if ((e.key === "Delete" || e.key === "Backspace") && Review.hi >= 0) { Review.rec().regions.splice(Review.hi, 1); Review.hi = -1; Review.cap(); Review.paint(); Review.list(); }
 });
@@ -1026,14 +1264,15 @@ const Suggest = {
   act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); }
 };
 
-/* ── AI 실행 패널: 프로젝트별 실행 · 단계 워드 스와이프 · 눈금 진행바 · 타일 스트립 ── */
-const FUN = { make: ["카피 문장을 고르는 중", "색 조합을 맞추는 중", "제품 사진을 다듬는 중", "여백을 계산하는 중", "글자 하나하나 검수하는 중", "섹션 순서를 정리하는 중", "고객이 멈출 지점을 만드는 중"], revise: ["표시한 영역을 확인하는 중", "톤을 그대로 유지하는 중", "고친 자리만 다시 그리는 중", "글자를 대조하는 중"] };
+/* ── AI 실행 패널: 프로젝트별 실행 · 단계 워드 스와이프 · 눈금 진행바 · 타일 스트립 · 자동/수동 이어하기 ── */
+const FUN = { make: ["카피 문장을 고르는 중", "색 조합을 맞추는 중", "제품 사진을 다듬는 중", "여백을 계산하는 중", "글자 하나하나 검수하는 중", "섹션 순서를 정리하는 중", "고객이 멈출 지점을 만드는 중"], revise: ["표시한 영역을 확인하는 중", "톤을 그대로 유지하는 중", "고친 자리만 다시 그리는 중", "글자를 대조하는 중"],
+  tile: ["앞뒤 장 톤을 맞추는 중", "이 장만 다시 그리는 중", "글자를 대조하는 중"], productcut: ["라벨 글자를 한 자씩 옮기는 중", "조명을 다듬는 중", "원본과 나란히 대조하는 중"], plan: ["섹션 흐름을 짜는 중", "카피를 다듬는 중"] };
 const RunUI = {
-  el: null, timer: null, next: 0, open: false, min: false, logOpen: false, lastKey: "", name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null,
+  el: null, timer: null, next: 0, rid: 0, open: false, min: false, logOpen: false, lastKey: "", name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null, last: null,
   ensure() {
     if (this.el) return this.el;
     this.el = el("div", "runp", `
-      <div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rel" id="runEl"></span><button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기">${svg("x")}</button></div>
+      <div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rel" id="runEl"></span><button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기 (작업은 계속)">${svg("x")}</button></div>
       <div class="rbody">
         <div class="rstage"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rpct"><b id="runPct">0</b><i>%</i></div></div>
         <div class="rticks" id="runTicks"><span class="rshine"></span></div>
@@ -1043,55 +1282,71 @@ const RunUI = {
         <div class="rtiles" id="runTiles"></div>
       </div>
       <div class="rl" id="runL" hidden></div>
-      <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>`);
+      <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm" id="runResume" hidden>${svg("refresh")} 이어서 하기</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>`);
     document.body.appendChild(this.el);
     const T = $("#runTicks", this.el); for (let i = 0; i < 44; i++) T.appendChild(el("i"));
     $("#runMin", this.el).onclick = () => { this.min = !this.min; this.el.classList.toggle("min", this.min); };
     $("#runLog", this.el).onclick = () => { this.logOpen = !this.logOpen; $("#runL", this.el).hidden = !this.logOpen; this.el.classList.toggle("logon", this.logOpen); };
     $("#runX", this.el).onclick = () => this.hide();
-    $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(this.name); } catch (e) { UI.toast(e.message, "w"); } };
-    $("#runGo", this.el).onclick = async () => { this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); App.curTile = null; go("review"); };
+    $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다. 나중에 <b>이어서 하기</b>로 남은 것만 이어서 할 수 있습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(this.name); } catch (e) { UI.toast(e.message, "w"); } };
+    $("#runResume", this.el).onclick = async () => { const nm = this.name, md = this.mode; try { await Local.run(nm, "resume"); this.show(`이어서 하기 — ${nm}`, nm, md); UI.toast("이어서 진행합니다 — 이미 만든 파일은 그대로 둡니다", "o"); } catch (e) { UI.alert("이어서 하지 못했습니다", esc(e.message), "d"); } };
+    $("#runGo", this.el).onclick = async () => { const j = this.last || {}; this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); if (j.mode === "productcut") { go("brief"); setTimeout(() => openCard("photos", true), 80); return; } App.curTile = j.newId || j.tile || null; go("review"); };
     return this.el;
   },
   show(title, name, mode) {
-    this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.lastKey = ""; this.seen = new Set(); this.funI = 0;
+    this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.lastKey = ""; this.seen = new Set(); this.funI = 0; this.rid = 0; this.last = null;
     this.el.classList.add("on", "live"); this.el.classList.remove("min", "done", "fail");
-    $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…";
+    $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runResume", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…";
     this.next = 0; this.poll(); this.fun(); this.tiles();
   },
   hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null; },
   fun() { clearInterval(this.funT); const list = FUN[this.mode] || FUN.make; const F = $("#runFun", this.el); const step = () => { const n = el("span", "in", esc(list[this.funI++ % list.length])); F.innerHTML = ""; F.appendChild(n); }; step(); this.funT = setInterval(step, 4200); },
-  /* 완성되는 타일을 8초마다 확인해 미니 스트립에 팝인 */
-  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); (p.tiles || []).filter(t => !/^_/.test(t.name)).forEach(t => { if (this.seen.has(t.name)) return; this.seen.add(t.name); const d = el("div", "rt", `<img src="${t.url}?v=${Date.now()}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); box.classList.toggle("has", box.children.length > 0); }; tick(); this.tileT = setInterval(tick, 8000); },
+  /* 완성되는 타일을 8초마다 확인해 미니 스트립에 팝인 (바뀐 파일도 다시 뜬다) */
+  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); if (!box) return; const list = this.mode === "productcut" ? (p.cuts || []) : (p.tiles || []).filter(t => !/^_/.test(t.name)); list.forEach(t => { const key = t.name + "@" + t.mtime; if (this.seen.has(key)) return; const first = this.seen.size === 0 && !this.primed; this.seen.add(key); if (first && this.mode !== "make" && this.mode !== "productcut") return; const d = el("div", "rt", `<img src="${t.url}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); this.primed = true; box.classList.toggle("has", box.children.length > 0); }; this.primed = false; tick(); this.tileT = setInterval(tick, 8000); },
   paint(j) {
     const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100);
-    const word = j.done ? (j.exit === 0 ? "완료" : "중단됨") : (idx >= 0 ? st[idx] : "준비");
+    const word = j.pendingResume ? "이어서" : j.done ? (j.exit === 0 ? "완료" : "중단됨") : (idx >= 0 ? st[idx] : "준비");
     const W = $("#runWord", this.el);
-    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); sw.appendChild(nw); setTimeout(() => { W.remove(); nw.classList.remove("in"); nw.id = "runWord"; }, 380); }
+    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); W.removeAttribute("id"); sw.appendChild(nw); nw.id = "runWord"; setTimeout(() => { W.remove(); nw.classList.remove("in"); }, 380); }
     const P = $("#runPct", this.el); if (P.textContent !== String(pct)) { P.textContent = pct; P.classList.remove("bump"); void P.offsetWidth; P.classList.add("bump"); }
     const ticks = $$("#runTicks i", this.el), n = Math.round(ticks.length * pct / 100);
     ticks.forEach((t, k) => { t.classList.toggle("on", k < n); t.classList.toggle("cur", k === n - 1); });
     $("#runChips", this.el).innerHTML = st.map((nm, k) => `<span class="${k < idx || (j.done && j.exit === 0) ? "past" : k === idx ? "cur" : ""}">${k < idx || (j.done && j.exit === 0) ? svg("check") : ""}${esc(nm)}</span>`).join("");
-    const gen = j.tileTotal ? `타일 ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
-    $("#runLast", this.el).innerHTML = j.done ? (j.exit === 0 ? "다 만들었습니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
-    const m = Math.round((Date.now() - j.startedAt) / 60000); $("#runEl", this.el).textContent = j.running ? `${m}분` : "";
+    const gen = j.tileTotal ? `${j.mode === "productcut" ? "컷" : "타일"} ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
+    $("#runLast", this.el).innerHTML = j.pendingResume ? "작업이 끊겨서 같은 세션으로 자동으로 이어서 진행합니다…" : j.done ? (j.exit === 0 ? "다 만들었습니다." : j.canResume ? "끝나지 않았습니다. <b>이어서 하기</b>로 만든 것은 두고 남은 것만 진행할 수 있습니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
+    const m = Math.round((Date.now() - j.startedAt) / 60000); $("#runEl", this.el).textContent = j.running ? `${m}분${j.resumes ? ` · 이어하기 ${j.resumes}회` : ""}` : "";
   },
   async poll() {
     clearInterval(this.timer);
     const tick = async () => {
-      let j; try { j = await Local.runStatus(this.name, this.next); } catch (e) { return; }
+      let j; try { j = await Local.runStatus(this.name, this.next, this.rid); } catch (e) { return; }
       const L = $("#runL", this.el);
+      if (j.reset || (this.rid && j.runId && j.runId !== this.rid)) { L.innerHTML = ""; this.seen = new Set(); this.primed = false; }
+      if (j.runId) this.rid = j.runId;
+      if (j.mode && j.mode !== this.mode) { this.mode = j.mode; this.fun(); }
       (j.lines || []).forEach(ln => { const d = el("div", "ln " + ln.kind, `<i>${new Date(ln.t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</i><span>${esc(ln.text)}</span>`); L.appendChild(d); });
       if ((j.lines || []).length && this.logOpen) L.scrollTop = L.scrollHeight;
-      this.next = j.next || this.next;
-      this.paint(j);
+      this.next = j.next != null ? j.next : this.next;
+      this.last = j; this.paint(j);
       const el2 = $("#runS", this.el);
-      if (j.running) el2.textContent = "실행 중 — 창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
-      else if (j.done) { clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null; this.el.classList.remove("live"); el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runStop", this.el).hidden = true; $("#runGo", this.el).hidden = j.exit !== 0; $("#runFun", this.el).innerHTML = "";
-        Local._projects = null;
-        if (j.exit === 0) { if (FS.name === this.name) { UI.toast("AI 작업 완료 — 검수 화면으로 이동합니다", "o"); await FS.load(FS.name, true); renderSide(); setTimeout(() => { this.hide(); App.curTile = null; go("review"); }, 900); } else UI.toast(`${this.name} 제작 완료 — [검수로] 를 누르면 그 프로젝트로 이동합니다`, "o"); }
-        else { UI.toast("AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); } }
-      else el2.textContent = "";
+      if (j.running) el2.textContent = j.pendingResume ? "자동 이어하기 대기 중" : "실행 중 — 창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
+      else if (j.done) {
+        clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null;
+        this.el.classList.remove("live"); el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail");
+        $("#runStop", this.el).hidden = true; $("#runFun", this.el).innerHTML = "";
+        const go1 = $("#runGo", this.el); go1.hidden = j.exit !== 0; go1.innerHTML = j.mode === "productcut" ? `${svg("eye")} 제품 컷 보기` : `${svg("check")} 검수로`;
+        $("#runResume", this.el).hidden = !(j.exit !== 0 && j.canResume);
+        Local._projects = null; Usage.load(true); QueueUI.load().then(() => renderSide());
+        const same = FS.name === this.name;
+        if (j.exit === 0) {
+          if (same) {
+            await FS.load(FS.name, true); renderSide();
+            if (j.mode === "productcut") { UI.toast("제품 컷이 나왔습니다 — 원본과 나란히 비교하고 승인하세요", "o"); setTimeout(() => { this.hide(); go("brief"); setTimeout(() => openCard("photos", true), 80); }, 900); }
+            else if (j.mode === "plan") UI.toast("기획안을 만들었습니다", "o");
+            else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 900); }
+          } else UI.toast(`${this.name} ${MODE_LABEL[j.mode] || ""} 완료 — [${j.mode === "productcut" ? "제품 컷 보기" : "검수로"}] 를 누르면 그 프로젝트로 이동합니다`, "o");
+        } else { UI.toast(j.canResume ? "AI 작업이 끝나지 않았습니다 — [이어서 하기] 로 남은 것만 진행할 수 있습니다" : "AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); }); }
+      } else el2.textContent = "";
     };
     await tick(); this.timer = setInterval(tick, 1500);
   }
@@ -1162,8 +1417,20 @@ const Settings = { title: "설정", render(v) {
       ${num("toastSec", "알림 표시 시간", "왼쪽 아래 알림이 사라지기까지", 1, 8, 0.5, "초")}
     </div></div></div>
 
+    ${Local.desktop ? `<h3 class="h3">AI 작업</h3>
+    <div class="card open"><div class="cbody" style="border-top:0"><div style="margin-top:6px">
+      <label class="srow"><span><b>끊기면 자동으로 이어서 하기</b><small>턴 한도·네트워크 끊김으로 멈추면 같은 세션으로 최대 2번 이어서 진행합니다. 만든 타일은 그대로 둡니다.</small></span><input type="checkbox" class="sw" data-cfg="autoResume" checked></label>
+      <label class="srow"><span><b>대기열 동시 실행</b><small>대기열에서 한 번에 돌릴 작업 수. Max 사용량을 아끼려면 1</small></span><span class="numin"><input type="number" data-cfg="queueConc" value="1" min="1" max="3" step="1"><em>개</em></span></label>
+      ${num("readPx", "가독성 기준 글자 크기", "모바일 390px 폭에서 이보다 작으면 경고 (2px 더 작으면 심각)", 8, 20, 1, "px")}
+      ${num("readContrast", "가독성 기준 대비", "배경·글자 대비(WCAG). 일반 글자 4.5 권장, 큰 글자는 자동으로 3", 2, 7, 0.5, ":1")}
+    </div></div></div>` : ""}
+
+    <h3 class="h3">도움말</h3>
+    <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>처음 사용 안내</b><small>프로젝트 → 제작 → 검수·내보내기 3단계 안내</small></span><button class="btn" data-act="tour">${svg("info")} 튜토리얼 다시 보기</button></div>
+      <div class="srow"><span><b>단축키</b><small>어디서나 <kbd>?</kbd> 를 누르면 표가 뜹니다</small></span><button class="btn" data-act="keys">${svg("keyboard")} 단축키 보기</button></div></div></div>
+
     ${Local.desktop ? `<h3 class="h3">업데이트</h3>
-    <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>버전 <span id="updV">확인 중…</span></b><small id="updS">GitHub 에 새 버전이 올라오면 정중앙 팝업으로 알려드립니다 (6시간마다 · 켤 때).</small></span><button class="btn" id="updChk">${svg("refresh")} 지금 확인</button></div></div></div>` : ""}
+    <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>버전 <span id="updV">확인 중…</span></b><small id="updS">새 버전은 알아서 받아 두었다가 AI 작업이 없을 때 조용히 적용합니다 (6시간마다 · 켤 때 확인).</small></span><button class="btn" id="updChk">${svg("refresh")} 지금 확인</button></div></div></div>` : ""}
 
     <h3 class="h3">데이터</h3>
     <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>브리프·검수 초기화</b><small>이 콘솔에 저장된 입력을 지웁니다. 폴더의 파일은 그대로입니다.</small></span><button class="btn dgr" data-act="reset">${svg("x")} 초기화</button></div>
@@ -1172,6 +1439,7 @@ const Settings = { title: "설정", render(v) {
     <p class="hint" style="margin-top:18px">re:boot · <code>#F86010</code> · 기준 문서는 상위 폴더 <code>README.md</code>${Local.desktop ? ` · 로그 <code>%APPDATA%\\re-boot 콘솔\\main-error.log</code>` : ""}</p>
   </div>`;
   renderConnect($("#connBox", v));
+  if (Local.desktop) Local.config().then(c => { const a = $('[data-cfg="autoResume"]', v), q = $('[data-cfg="queueConc"]', v); if (a) a.checked = c.autoResume !== false; if (q) q.value = c.queueConc || 1; }).catch(() => {});
   if (Local.desktop) {
     const showU = u => { const V = $("#updV", v), S = $("#updS", v); if (!V) return; V.textContent = "v" + (u.current || "?"); S.textContent = u.state === "available" || u.state === "downloading" ? `새 버전 ${u.version} 내려받는 중` : u.state === "downloaded" || u.state === "downloaded-wait" ? `${u.version} 준비됨 — 한가할 때 자동 적용` : u.state === "installing" ? `${u.version} 적용 중 — 곧 다시 열립니다` : u.state === "latest" ? "최신 버전입니다" : u.state === "checking" ? "확인 중…" : u.state === "error" ? "확인 실패: " + (u.error || "") : u.state === "unsupported" ? "개발 실행에서는 꺼져 있습니다" : "새 버전은 알아서 내려받고 자동으로 적용됩니다."; };
     Local.update().then(showU).catch(() => {});
@@ -1183,13 +1451,478 @@ const Settings = { title: "설정", render(v) {
     const a = e.target.closest("[data-act]"); if (a) ACT[a.dataset.act]();
   });
   v.addEventListener("change", e => {
-    const t = e.target; if (!t.dataset || !t.dataset.set) return;
+    const t = e.target;
+    if (t.dataset && t.dataset.cfg) { const k = t.dataset.cfg, val = t.type === "checkbox" ? t.checked : clamp(parseInt(t.value, 10) || 1, 1, 3); if (t.type !== "checkbox") t.value = val; Local.configSet({ [k]: val }).then(() => UI.toast("저장했습니다", "o")).catch(err => UI.toast(err.message, "w")); return; }
+    if (!t.dataset || !t.dataset.set) return;
     const k = t.dataset.set;
     if (t.type === "checkbox") SET[k] = t.checked;
     else { let n = parseFloat(t.value); if (isNaN(n)) n = SET_DEF[k]; n = clamp(n, +t.min, +t.max); t.value = n; SET[k] = n; }
     saveSet(); UI.toast("저장했습니다", "o");
   });
 }};
+
+/* ═══ v4.8 공용 ═══ */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const pad2 = n => String(n).padStart(2, "0");
+const fmtT = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const fmtNum = n => n == null || isNaN(n) ? "—" : Number(n).toLocaleString("ko-KR");
+const MODE_LABEL = { make: "제작", revise: "검수 반영", tile: "한 장 제작", productcut: "제품 컷", plan: "기획안", resume: "이어서 하기", custom: "AI 작업" };
+const runTitle = (mode, name, s) => `${MODE_LABEL[mode] || "AI 작업"}${s && s.tile ? " " + s.tile + (s.op === "insert" ? " 뒤에 추가" : " 다시") : ""} — ${name}`;
+const tileByN = n => App.tiles.find(t => t.n === n) || null;
+/* 가벼운 AI 작업(오타·피드백·경쟁사·PSD) 끝날 때까지 기다린다 */
+async function waitJob(kind, name, onTick) {
+  const t0 = Date.now();
+  for (;;) {
+    await sleep(1800);
+    let j; try { j = await Local.job(kind, name); } catch (e) { if (Date.now() - t0 > 20 * 60000) return { error: "응답이 없습니다" }; continue; }
+    if (onTick) onTick(j);
+    if (!j.running) return j;
+  }
+}
+/* 검수 내용을 먼저 저장하고 프로젝트를 다시 읽는다 (서버 파일이 바뀐 뒤) */
+async function reloadProject() { if (!FS.name) return false; clearTimeout(Review._svT); await FS.saveReviewFile(); return FS.load(FS.name, true); }
+const grow = (b, k) => { const px = b.h * (k == null ? .35 : k); const x = clamp(b.x - px * .6, 0, 1), y = clamp(b.y - px, 0, 1); return { x: +x.toFixed(4), y: +y.toFixed(4), w: +clamp(b.w + px * 1.2, .01, 1 - x).toFixed(4), h: +clamp(b.h + px * 2, .01, 1 - y).toFixed(4) }; };
+
+/* ═══ 가독성 (#25): Windows OCR 줄 박스 → 모바일(390px) 글자 크기 · 배경 대비 ═══ */
+const Read = {
+  cache: {},
+  async doc(t) {
+    if (!t || !Local.ok) return null; if (this.cache[t.f]) return this.cache[t.f];
+    try { const j = await Local.ocr(FS.name, [t.n]); const d = j.tiles && j.tiles[t.n]; if (d && d.ok) { this.cache[t.f] = d; return d; } } catch (e) {}
+    return null;
+  },
+  async all() {
+    try { const j = await Local.ocr(FS.name); App.tiles.forEach(t => { const d = j.tiles && j.tiles[t.n]; if (d && d.ok) this.cache[t.f] = d; }); return true; }
+    catch (e) { UI.toast("글자 위치를 읽지 못했습니다: " + e.message, "w"); return false; }
+  },
+  valid(l) { return String(l.text || "").replace(/[^0-9A-Za-z가-힣]/g, "").length >= 2 && l.h >= 6; },
+  issues(t) {
+    const doc = this.cache[t.f]; if (!doc) return null;
+    const out = [], k = 390 / doc.w;
+    doc.lines.forEach(l => {
+      if (!this.valid(l)) return;
+      const fpx = Math.round(l.h * 1.1 * k * 10) / 10, large = fpx >= 18, need = large ? 3 : SET.readContrast;
+      const sz = fpx < SET.readPx - 2 ? "d" : fpx < SET.readPx ? "w" : "";
+      const c = l.contrast, lo = c == null ? "" : c < need * .67 ? "d" : c < need ? "w" : "";
+      if (!sz && !lo) return;
+      out.push({ id: l.id, text: l.text, fpx, c, sz, lo, lv: sz === "d" || lo === "d" ? "d" : "w", box: { x: l.x / doc.w, y: l.y / doc.h, w: l.w / doc.w, h: l.h / doc.h } });
+    });
+    return out;
+  },
+  label(i) { return [i.sz ? `모바일 글자 약 ${i.fpx}px` : "", i.lo ? `대비 ${i.c}:1` : ""].filter(Boolean).join(" · "); },
+  request(i) { return [i.sz ? `모바일(390px 폭)에서 이 글자가 약 ${i.fpx}px 로 작습니다 — 글자 크기를 키워주세요` : "", i.lo ? `배경과 글자 대비가 ${i.c}:1 로 낮습니다 — 톤은 유지하고 글자색이나 배경을 조정해 대비를 높여주세요` : ""].filter(Boolean).join(". "); }
+};
+
+/* ═══ 오타 검사 (#4) ═══ */
+const Typo = {
+  running: false,
+  of(t) { const ty = FS.typo, r = ty && ty.tiles && ty.tiles[t.n]; return r ? Object.assign({ fresh: r.mtime === t.mtime }, r) : null; },
+  count() { let n = 0; App.tiles.forEach(t => { const r = this.of(t); if (r && r.fresh) n += (r.issues || []).length; }); return n; },
+  needed() { return App.tiles.some(t => { const r = this.of(t); return !r || !r.fresh; }); },
+  async run() {
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    if (this.running) return UI.toast("이미 검사 중입니다 — 끝나면 알려드립니다");
+    if (!App.tiles.length) return UI.toast("타일이 없습니다", "w");
+    const ok = await UI.confirm("오타 자동 검사", `타일 ${App.tiles.length}장의 글자 위치를 읽고(Windows OCR, 무료) AI 가 이미지를 직접 보고 오타·맞춤법·깨진 글자·기획 카피와 다른 곳을 찾습니다. 1~3분 · Max 사용량을 조금 씁니다.`, { ok: "검사 시작", tone: "b" });
+    if (!ok) return;
+    try { await Local.typo(FS.name); } catch (e) { return UI.alert("오타 검사를 시작하지 못했습니다", esc(e.message), "d"); }
+    const name = FS.name; this.running = true; this.paintBtn(); UI.toast(`AI 가 타일 ${App.tiles.length}장을 한 글자씩 읽는 중… 다른 작업을 하셔도 됩니다`);
+    const j = await waitJob("typo", name);
+    this.running = false;
+    if (j.error) { this.paintBtn(); return UI.alert("오타 검사 실패", esc(j.error), "d"); }
+    if (FS.name === name) await reloadProject();
+    const n = (j.data && j.data.count) || 0;
+    UI.toast(n ? `${name}: 오타 의심 ${n}건 — 검수 화면에 주황 점선으로 표시했습니다` : `${name}: 오타 검사 완료 — 이상 없음`, n ? "w" : "o");
+    if (FS.name === name) { Review.showTypo = true; if (App.view === "review") Review.refresh(); else if (App.view === "tiles") go("tiles"); else renderSide(); }
+  },
+  paintBtn() { const b = $("#rvTypo"); if (b) { b.disabled = this.running; b.innerHTML = this.running ? `${svg("refresh", "spin")} 검사 중…` : `${svg("spell")} 오타 검사`; } }
+};
+
+/* ═══ 사용량 계기판 (#11) ═══ */
+const Usage = {
+  data: null, timer: null,
+  async load(force) { if (!Local.desktop) return null; try { this.data = await Local.usage(force); } catch (e) {} this.paint(); return this.data; },
+  cls(p) { return p >= 85 ? "d" : p >= 60 ? "w" : ""; },
+  line() {
+    const d = this.data; if (!d) return "";
+    const c = d.claude || {}, h = d.hf || {};
+    return [c.ok && c.five ? `Max 5시간 창 ${c.five.pct}%` : "", c.ok && c.week ? `주간 ${c.week.pct}%` : "", h.ok ? `Higgsfield ${fmtNum(h.credits)} 크레딧` : ""].filter(Boolean).join(" · ");
+  },
+  warn() { const c = (this.data || {}).claude || {}; return c.ok && ((c.five && c.five.pct >= 85) || (c.week && c.week.pct >= 90)); },
+  resetAt(s) { if (!s) return ""; const d = new Date(s); if (isNaN(d)) return ""; const same = d.toDateString() === new Date().toDateString(); return (same ? "" : `${d.getMonth() + 1}/${d.getDate()} `) + `${pad2(d.getHours())}:${pad2(d.getMinutes())} 리셋`; },
+  paint() {
+    const f = $("#sideFoot"); if (!f || !Local.desktop) return; const d = this.data;
+    f.onclick = () => this.open();
+    if (!d) { f.innerHTML = `<button class="umeter">${svg("gauge")}<span class="hint" style="margin:0">사용량 확인 중…</span></button>`; return; }
+    const c = d.claude || {}, h = d.hf || {}, q = d.queue || {};
+    const bar = (lbl, w) => w ? `<span class="umr"><small>${lbl}</small><i class="ubar ${this.cls(w.pct)}"><b style="width:${clamp(w.pct, 0, 100)}%"></b></i><em>${w.pct}%</em></span>` : "";
+    f.innerHTML = `<button class="umeter" title="사용량 자세히 (클릭)">${c.ok ? bar("Max 5시간", c.five) + bar("Max 주간", c.week) : `<span class="umr"><small>Claude</small><em class="w">${esc(c.reason || "확인 불가")}</em></span>`}
+      <span class="umr"><small>Higgsfield</small><em class="${h.ok ? "" : "w"}">${h.ok ? fmtNum(h.credits) + " 크레딧" : esc(h.reason || "확인 불가")}</em></span>
+      ${q.waiting || q.running ? `<span class="umr"><small>대기열</small><em>${q.running ? "실행 " + q.running + " · " : ""}대기 ${q.waiting}</em></span>` : ""}</button>`;
+  },
+  start() { if (!Local.desktop) return; this.paint(); this.load(); clearInterval(this.timer); this.timer = setInterval(() => this.load(), 120000); },
+  async open() {
+    const d = await this.load(true); if (!d) return UI.toast("사용량을 읽지 못했습니다", "w");
+    const c = d.claude || {}, h = d.hf || {}, L = d.local || {}, m = L.month || {}, td = L.today || {};
+    const card = (t, b, e, p) => `<div class="ucard"><small>${t}</small><b>${b}</b>${p != null ? `<i class="ubar ${this.cls(p)}"><b style="width:${clamp(p, 0, 100)}%"></b></i>` : ""}<em>${e || ""}</em></div>`;
+    UI.dialog({ title: "사용량", sub: "Claude Max 창 · Higgsfield 크레딧 · 이 PC 의 이번 달 기록", icon: "gauge", tone: "b", wide: true,
+      body: `<div class="ugrid">
+        ${c.ok ? card("Claude Max · 5시간 창", (c.five ? c.five.pct : "—") + "%", c.five ? this.resetAt(c.five.resetsAt) : "", c.five && c.five.pct) + card("Claude Max · 주간", (c.week ? c.week.pct : "—") + "%", c.week ? this.resetAt(c.week.resetsAt) : "", c.week && c.week.pct) : card("Claude", "—", esc(c.reason || "확인 불가"))}
+        ${c.ok && c.extra ? card("추가 사용량", c.extra.on ? "켜짐" : "꺼짐", c.extra.on ? `사용 ${fmtNum(c.extra.used)} / 한도 ${fmtNum(c.extra.limit)}` : "한도에 닿으면 다음 창까지 멈춤") : ""}
+        ${card("Higgsfield 잔여", h.ok ? fmtNum(h.credits) : "—", h.ok ? "크레딧" : esc(h.reason || "확인 불가"))}
+      </div>
+      <h4 class="h4">이번 달 · 이 PC 기록</h4>
+      <dl class="kv"><dt>AI 작업</dt><dd>${fmtNum(m.runs)}회 (완료 ${fmtNum(m.ok)}) · 오늘 ${fmtNum(td.runs)}회</dd><dt>이미지 생성·편집 호출</dt><dd>${fmtNum(m.gen)}회 · 오늘 ${fmtNum(td.gen)}회</dd><dt>AI 작업 시간</dt><dd>${fmtDur((m.min || 0) * 60)}</dd></dl>
+      ${(L.byProject || []).length ? `<table class="utab"><tr><th>프로젝트</th><th>작업</th><th>이미지 호출</th></tr>${L.byProject.map(p => `<tr><td>${esc(p.name)}</td><td>${p.runs}</td><td>${p.gen}</td></tr>`).join("")}</table>` : ""}
+      <p class="hint" style="margin-top:10px">Max 창 % 는 claude.ai 설정 → 사용량과 같은 값입니다. 5시간 창이 85% 를 넘으면 작업이 중간에 멈출 수 있으니 대기열·야간 예약을 쓰세요. 멈춰도 <b>이어서 하기</b>로 만든 타일은 그대로 두고 이어집니다.</p>`,
+      buttons: [{ label: "닫기", value: 0, kind: "pri" }] });
+  }
+};
+
+/* ═══ 작업 기록 타임라인 (#28) ═══ */
+const TL_IC = { run: "sparkles", done: "check", fail: "warn", export: "down", restore: "history", photo: "photo", project: "folder", queue: "clock", check: "spell", feedback: "inbox", ai: "sparkles", stage: "kanban", note: "doc" };
+function tlHtml(items, withProj) {
+  if (!items || !items.length) return `<p class="hint">아직 기록이 없습니다. 제작·수정·내보내기를 하면 자동으로 쌓입니다.</p>`;
+  let day = "";
+  return `<div class="tl">` + items.map(x => {
+    const d = new Date(x.t), ds = d.toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
+    const hd = ds !== day ? (day = ds, `<div class="tld">${esc(ds)}</div>`) : "";
+    return hd + `<div class="tli k-${esc(x.k)}"><span class="tic">${svg(TL_IC[x.k] || "doc")}</span><span class="ttm">${pad2(d.getHours())}:${pad2(d.getMinutes())}</span><span class="ttx">${withProj && x.p ? `<b>${esc(x.p)}</b> · ` : ""}${esc(x.x)}</span>${(x.file || x.dir) && x.p ? `<button class="btn sm ghost" data-tfile="${esc(x.file || "")}" data-tdir="${esc(x.dir || "")}" data-tp="${esc(x.p)}">${svg("ext")} 열기</button>` : ""}</div>`;
+  }).join("") + `</div>`;
+}
+async function tlClick(e) {
+  const b = e.target.closest("[data-tp]"); if (!b) return false;
+  try { if (b.dataset.tfile) await Local.toolAct("open-file", { name: b.dataset.tp, file: b.dataset.tfile }); else await Local.toolAct("open-folder", { name: b.dataset.tp, sub: b.dataset.tdir }); } catch (err) { UI.toast(err.message, "w"); }
+  return true;
+}
+
+/* ═══ 대기열 + 야간 배치 (#14) ═══ */
+const Q_ST = { waiting: "대기", running: "실행 중", done: "완료", failed: "실패" };
+const QueueUI = {
+  items: [], conc: 1,
+  async load() { if (!Local.desktop) return []; try { const j = await Local.queue(); this.items = j.items || []; this.conc = j.conc || 1; } catch (e) { this.items = []; } return this.items; },
+  html() {
+    if (!this.items.length) return "";
+    const act = (it, k, lbl, ic) => `<button class="btn sm ghost" data-q="${k}" data-qid="${it.id}" title="${lbl}">${ic ? svg(ic) : ""}${ic ? "" : lbl}</button>`;
+    return `<div class="qpanel"><div class="qh">${svg("clock")}<b>대기열</b><span class="hint" style="margin:0">순서대로 한 번에 ${this.conc}개씩 · 창을 닫아도 트레이에서 돕니다</span><span class="sp"></span>${this.items.some(i => i.status === "done" || i.status === "failed") ? `<button class="btn sm ghost" data-q="clear">끝난 항목 지우기</button>` : ""}</div>
+      ${this.items.map(it => `<div class="qrow s-${it.status}"><span class="qst">${Q_ST[it.status] || it.status}</span><span class="qtx"><b>${esc(it.name)}</b><small>${esc(MODE_LABEL[it.mode] || it.mode)}${it.tile ? " · " + esc(it.tile) + (it.op === "insert" ? " 뒤에 추가" : "") : ""}${it.status === "waiting" && it.startAt ? " · " + fmtT(it.startAt) + " 예약" : ""}${it.info ? " · " + esc(it.info) : ""}${it.error ? " · " + esc(it.error).slice(0, 80) : ""}</small></span>
+        ${it.status === "waiting" ? act(it, "now", "지금 시작") + act(it, "up", "위로", "chevU") + act(it, "down", "아래로", "chev") + act(it, "remove", "빼기", "x") : ""}
+        ${it.status === "failed" ? act(it, "retry", "이어서 재시도") + act(it, "remove", "빼기", "x") : ""}
+        ${it.status === "running" ? act(it, "watch", "보기") : ""}${it.status === "done" ? act(it, "open", "열기") + act(it, "remove", "빼기", "x") : ""}</div>`).join("")}</div>`;
+  },
+  async click(e) {
+    const b = e.target.closest("[data-q]"); if (!b) return false;
+    const k = b.dataset.q, id = b.dataset.qid, it = this.items.find(x => x.id === id);
+    try {
+      if (k === "watch" && it) { RunUI.show(runTitle(it.mode, it.name, it), it.name, it.mode); return true; }
+      if (k === "open" && it) { if (await FS.load(it.name, false)) go("review"); return true; }
+      await Local.queueAct(k, id); UI.toast(k === "now" ? "곧 시작합니다" : k === "retry" ? "이어서 하기로 다시 대기합니다" : "반영했습니다", "o");
+    } catch (err) { UI.toast(err.message, "w"); }
+    await this.load(); if (App.view === "projects") go("projects"); Usage.load(); return true;
+  }
+};
+/* 대기열에 넣을 때: 지금 순서대로 / 오늘 밤 / 직접 */
+async function askWhen(what) {
+  const now = new Date(), night = new Date(now); night.setHours(2, 0, 0, 0); if (night <= now) night.setDate(night.getDate() + 1);
+  const local = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const v = await UI.dialog({ title: "대기열에 넣기", sub: `${esc(what)} — 앞 작업이 끝나면 차례로 돌고, 끝나면 알림이 옵니다. 창을 닫아도 트레이에서 계속합니다.`, icon: "clock", tone: "b",
+    body: `<div class="pmpick"><button class="pm" data-w="0"><b>지금 순서대로</b><small>앞 작업이 없으면 바로 시작합니다.</small></button><button class="pm" data-w="${night.getTime()}"><b>오늘 밤 ${night.getDate() !== now.getDate() ? "(내일) " : ""}2시</b><small>퇴근 전에 걸어두고 아침에 검수. Max 사용량 창을 낮 작업과 나눕니다.</small></button></div>
+      <div class="fld" style="margin-top:12px"><label>직접 정하기</label><div style="display:flex;gap:6px"><input type="datetime-local" id="qWhen" value="${local(new Date(now.getTime() + 3600e3))}" style="flex:1"><button class="btn" data-w="pick">이 시각에</button></div></div>`,
+    buttons: [{ label: "취소", value: null }], onOpen(d) { $$("[data-w]", d).forEach(b => b.onclick = () => { if (b.dataset.w === "pick") { const t = new Date($("#qWhen", d).value).getTime(); UI._close(isNaN(t) ? 0 : t); } else UI._close(+b.dataset.w); }); } });
+  return v == null ? null : +v;
+}
+async function enqueue(b, what) {
+  const when = await askWhen(what); if (when == null) return false;
+  try { const j = await Local.queueAdd(Object.assign({ name: FS.name, photoMode: photoModeOf() }, b, { startAt: when })); UI.toast(j.message || "대기열에 넣었습니다", "o"); Usage.load(); await QueueUI.load(); return true; }
+  catch (e) { UI.alert("대기열에 넣지 못했습니다", esc(e.message), "d"); return false; }
+}
+
+/* ═══ 제품 컷 A/B 비교 승인 (#1) ═══ */
+const Cut = {
+  meta(c) { return ((FS.cutsMeta || {}).cuts || []).find(x => x.file === c.name) || {}; },
+  orig(c) { const m = this.meta(c); return (FS.images || []).find(i => i.name === m.from) || (FS.images || [])[0] || null; },
+  box() {
+    if (!Local.desktop || !(FS.images || []).length) return "";
+    const cuts = FS.cuts || [], ap = FS.approved;
+    const head = `<div class="pcut-h">${svg("layers")}<b>제품 컷 먼저 확인</b><span class="tag ${ap ? "ok" : "n"}">${ap ? "승인됨 · 본 제작에 사용" : "권장"}</span><span class="sp"></span>${cuts.length ? `<button class="btn sm ghost" data-cut="more">${svg("refresh")} 다시 만들기</button>` : ""}</div>`;
+    if (!cuts.length) return `<div class="pcut">${head}<p class="hint" style="margin:6px 0 10px">AI 고화질 재현 제품 컷(누끼·연출 2장)을 먼저 만들어 <b>원본과 나란히</b> 보고 승인합니다. 승인한 컷은 본 제작에서 그대로 합성해 라벨·로고가 틀리는 사고를 제작 <b>전에</b> 막습니다. (이미지 약 2장 분량)</p><button class="btn sm pri" data-cut="make">${svg("sparkles")} 제품 컷 만들기</button></div>`;
+    return `<div class="pcut">${head}<div class="cutgrid">${cuts.map(c => { const m = this.meta(c), o = this.orig(c), on = ap && ap.file === c.name;
+      return `<div class="cutc${on ? " ok" : ""}"><div class="cutab" data-cut="cmp" data-f="${esc(c.name)}" title="크게 비교"><figure>${o ? `<img src="${o.url}" alt="">` : ""}<figcaption>원본</figcaption></figure><figure><img src="${c.url}" alt=""><figcaption>${esc(m.kind || c.name.replace(/\.[^.]+$/, ""))}</figcaption></figure></div>
+        ${m.check ? `<p class="cutchk">${esc(m.check)}</p>` : ""}
+        <div class="cutb"><button class="btn sm" data-cut="cmp" data-f="${esc(c.name)}">${svg("eye")} 크게 비교</button>${on ? `<button class="btn sm" data-cut="unok">승인 취소</button>` : `<button class="btn sm pri" data-cut="ok" data-f="${esc(c.name)}">${svg("check")} 승인</button>`}<button class="btn sm ghost" data-cut="del" data-f="${esc(c.name)}" title="빼기">${svg("trash")}</button></div></div>`; }).join("")}</div>
+      <p class="hint" style="margin:8px 0 0">${ap ? `<b>${esc(ap.file)}</b> 를 본 제작에 씁니다. 로고·라벨 글자·형태가 원본과 같은지 확인하셨죠?` : "로고·라벨 글자·형태가 원본과 같은 컷을 <b>승인</b>하세요. 다르면 다시 만들기."}</p></div>`;
+  },
+  paint() { const b = $("#pcut"); if (b) b.innerHTML = this.box(); },
+  async act(k, f) {
+    const c = (FS.cuts || []).find(x => x.name === f);
+    if (k === "make" || k === "more") return ACT.productCut(k === "more");
+    if (k === "cmp" && c) return this.compare(c);
+    if (k === "ok" && c) return this.approve(c);
+    if (k === "unok") { try { await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: "", at: new Date().toISOString() })); } catch (e) {} FS.approved = null; this.paint(); return UI.toast("승인을 취소했습니다"); }
+    if (k === "del" && c) { if (!(await UI.confirm("이 컷을 뺄까요?", `${esc(c.name)} 은 _trash 로 옮겨집니다.`, { ok: "빼기", danger: true }))) return; try { await Local.deleteFile(FS.name, c.name, "product"); if (FS.approved && FS.approved.file === c.name) await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: "" })); await reloadProject(); this.paint(); } catch (e) { UI.toast(e.message, "w"); } }
+  },
+  async approve(c) {
+    const m = this.meta(c);
+    try { await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: c.name, from: m.from || "", at: new Date().toISOString() }, null, 2)); FS.approved = { file: c.name, from: m.from || "" }; Local.logAdd(FS.name, "check", `제품 컷 승인 — ${c.name}`); this.paint(); UI.toast("승인했습니다 — 본 제작에서 이 컷을 그대로 씁니다", "o"); }
+    catch (e) { UI.alert("저장 실패", esc(e.message), "d"); }
+  },
+  async compare(c) {
+    const o = this.orig(c), m = this.meta(c), origs = FS.images || [];
+    const v = await UI.dialog({ title: "원본 ↔ AI 제품 컷", sub: "로고·라벨 글자(한 글자씩)·형태·색이 같은지 보세요. 겹쳐 보기에서 막대를 끌면 경계가 움직입니다.", icon: "eye", tone: "b", wide: true,
+      body: `<div class="abhead"><div class="seg" id="abMode"><button class="on" data-m="side">나란히</button><button data-m="over">겹쳐 보기</button></div><label class="hint" style="margin:0">원본 <select id="abOrig">${origs.map(i => `<option value="${esc(i.url)}"${o && i.url === o.url ? " selected" : ""}>${esc(i.name)}</option>`).join("")}</select></label></div>
+        <div class="abw side" id="abw"><figure class="aa"><img id="abA" src="${o ? o.url : ""}" alt=""><figcaption>원본</figcaption></figure><figure class="bb"><img id="abB" src="${c.url}" alt=""><figcaption>${esc(m.kind || c.name)}</figcaption></figure><i class="abar" id="abBar"></i></div>
+        <input type="range" id="abR" min="0" max="100" value="50" hidden>${m.check ? `<p class="hint" style="margin-top:8px">AI 대조 메모: ${esc(m.check)}</p>` : ""}`,
+      buttons: [{ label: "닫기", value: 0 }, { label: "다시 만들기", value: 2 }, { label: "승인", value: 1, kind: "pri" }],
+      onOpen(d) {
+        const w = $("#abw", d), r = $("#abR", d), set = () => { w.style.setProperty("--ab", r.value + "%"); };
+        $("#abMode", d).onclick = e => { const b = e.target.closest("[data-m]"); if (!b) return; $$("#abMode button", d).forEach(x => x.classList.toggle("on", x === b)); w.className = "abw " + b.dataset.m; r.hidden = b.dataset.m !== "over"; set(); };
+        r.oninput = set; set();
+        w.addEventListener("pointermove", e => { if (!w.classList.contains("over") || !(e.buttons & 1)) return; const bx = w.getBoundingClientRect(); r.value = clamp(Math.round((e.clientX - bx.left) / bx.width * 100), 0, 100); set(); });
+        $("#abOrig", d).onchange = e => { $("#abA", d).src = e.target.value; };
+        $$("img", w).forEach(im => im.ondblclick = () => UI.lightbox(im.src));
+      } });
+    if (v === 1) return this.approve(c);
+    if (v === 2) return ACT.productCut(true);
+  }
+};
+
+/* ═══ 경쟁사 상세페이지 분석 (#19) ═══ */
+const Ref = {
+  running: false,
+  box() {
+    const r = FS.ref, b = App.brief.ref || {}, refs = (FS.refs || []).filter(i => !/^web\d+_/.test(i.name));
+    if (!Local.desktop) return "";
+    const list = (t, a) => a && a.length ? `<div class="rfl"><b>${t}</b><ul>${a.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+    return `<div class="refc"><div class="pcut-h">${svg("globe")}<b>경쟁사 상세페이지 참고</b><span class="tag n">선택</span></div>
+      <p class="hint" style="margin:4px 0 8px">같은 카테고리 상위 상품 페이지 URL 을 넣거나(최대 3개) 캡처를 올리면, 구성·설득 흐름·빈틈을 분석해 우리 페이지 구성에 반영합니다. 문구·이미지는 베끼지 않습니다.</p>
+      <div class="rfu">${[1, 2, 3].map(i => `<input type="text" data-k="ref.u${i}" data-notab value="${esc(b["u" + i] || "")}" placeholder="https:// 경쟁사 상품 페이지 ${i}">`).join("")}</div>
+      <div class="rfs">${refs.map(i => `<div class="rfsh"><img src="${i.url}" alt="" data-lb="${i.url}"><button class="shx" data-ref="del" data-f="${esc(i.name)}" title="빼기">${svg("x")}</button></div>`).join("")}
+        <button class="btn sm" data-ref="add">${svg("plus")} 캡처 올리기</button><button class="btn sm ghost" data-ref="paste">${svg("copy")} 붙여넣기</button></div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px"><button class="btn sm pri" data-ref="run"${this.running ? " disabled" : ""}>${this.running ? svg("refresh", "spin") + " 분석 중…" : svg("sparkles") + " 분석하기"}</button><span class="hint" style="margin:0">${this.running ? "페이지를 열어 캡처하고 AI 가 읽는 중입니다 (1~2분)" : "로그인이 필요한 페이지는 캡처를 올려주세요"}</span></div>
+      ${r && r.summary ? `<div class="rfr"><p><b>요약</b> ${esc(r.summary)}</p>${list("경쟁사 흐름", r.flow)}${list("잘한 점", r.strengths)}${list("빈틈 — 우리가 파고들 곳", r.gaps)}${list("우리 페이지에 적용할 아이디어", r.ideas)}${list("차별화 메시지", r.differ)}${list("피할 것", r.avoid)}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${(r.sections || []).length ? `<button class="btn sm" data-ref="sec">${svg("check")} 추천 섹션 구성에 반영 (${r.sections.map(id => (catOf(id) || {}).label || id).join(", ")})</button>` : ""}<button class="btn sm" data-ref="idea">${svg("edit")} 아이디어를 요청사항에 넣기</button></div>
+        <p class="hint" style="margin:6px 0 0">${fmtT(Date.parse(r.at))} 분석 · 제작 시 지시서에 함께 들어갑니다.</p></div>` : ""}</div>`;
+  },
+  paint() { const b = $("#refbox"); if (b) b.innerHTML = this.box(); },
+  async act(k, f) {
+    if (k === "add") { let inp = $("#refPick"); if (!inp) { inp = el("input"); inp.type = "file"; inp.id = "refPick"; inp.multiple = true; inp.accept = "image/*"; inp.hidden = true; document.body.appendChild(inp); } inp.value = ""; inp.onchange = async () => { let n = 0; for (const fl of inp.files) { try { await Local.addRef(FS.name, fl.name, fl); n++; } catch (e) { UI.toast(e.message, "w"); } } if (n) { await reloadProject(); this.paint(); UI.toast(`캡처 ${n}장 올렸습니다`, "o"); } }; inp.click(); return; }
+    if (k === "paste") { try { const j = await Local.pasteClip(FS.name, "ref"); await reloadProject(); this.paint(); UI.toast(`캡처 ${j.files.length}장 붙여넣었습니다`, "o"); } catch (e) { UI.toast(/이미지가 없습니다/.test(e.message) ? "클립보드에 이미지가 없습니다" : e.message, "w"); } return; }
+    if (k === "del") { try { await Local.deleteFile(FS.name, f, "ref"); await reloadProject(); this.paint(); } catch (e) { UI.toast(e.message, "w"); } return; }
+    if (k === "sec") { const r = FS.ref || {}; const cur = new Set(layoutSel()); (r.sections || []).forEach(id => { if (catOf(id)) cur.add(id); }); App.brief.layout = { sections: CATALOG.filter(c => cur.has(c.id)).map(c => c.id) }; App.saveBrief(); ACT.saveBrief(true); go("brief"); setTimeout(() => openCard("layout", true), 60); return UI.toast("추천 섹션을 구성에 넣었습니다", "o"); }
+    if (k === "idea") { const r = FS.ref || {}; const add = [...(r.ideas || []).map(x => "· " + x), ...(r.differ || []).map(x => "· 차별화: " + x)].join("\n"); if (!add) return; App.brief.req = App.brief.req || {}; const cur = String(App.brief.req.etc || ""); if (cur.includes(add.slice(0, 30))) return UI.toast("이미 넣었습니다"); App.brief.req.etc = (cur.trim() ? cur.trim() + "\n" : "") + "[경쟁사 분석에서]\n" + add; App.saveBrief(); ACT.saveBrief(true); go("brief"); setTimeout(() => openCard("req", true), 60); return UI.toast("요청사항에 넣었습니다 — 필요 없는 줄은 지우세요", "o"); }
+    if (k === "run") return this.run();
+  },
+  async run() {
+    if (this.running) return;
+    const b = App.brief.ref || {}, urls = [b.u1, b.u2, b.u3].map(x => String(x || "").trim()).filter(Boolean);
+    const bad = urls.filter(u => !/^https?:\/\//i.test(u)); if (bad.length) return UI.toast("URL 은 https:// 로 시작해야 합니다", "w");
+    try { await Local.ref(FS.name, urls, ""); } catch (e) { return UI.alert("분석을 시작하지 못했습니다", esc(e.message), "d"); }
+    const name = FS.name; this.running = true; this.paint();
+    const j = await waitJob("ref", name);
+    this.running = false;
+    if (j.error) { this.paint(); return UI.alert("경쟁사 분석 실패", esc(j.error), "d"); }
+    if (FS.name === name) { await reloadProject(); this.paint(); }
+    UI.toast("경쟁사 분석 완료 — 페이지 구성 카드 아래를 확인하세요", "o");
+  }
+};
+
+/* ═══ 클라이언트 피드백 수신함 (#15): 붙여넣기 → AI 가 장별로 나눔 → 검수 영역·글자 교체로 ═══ */
+const Feedback = {
+  running: false,
+  async open() {
+    if (!App.tiles.length) return UI.toast("타일이 없습니다", "w");
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    if (this.running) return UI.toast("이전 피드백을 정리하는 중입니다");
+    const v = await UI.dialog({ title: "클라이언트 피드백 붙여넣기", sub: "카톡·메일로 받은 글을 그대로 붙여넣으세요. 프리뷰의 [피드백 복사] 형식이든 자유 문장이든 됩니다.", icon: "inbox", tone: "b", wide: true,
+      body: `<textarea id="fbText" style="min-height:220px" placeholder="예)\n3번째 장 '세차장 에어건' 문구를 '세차장 에어건을 집으로'로 바꿔주세요\n가격 48,900원 → 45,900원\n전체적으로 글씨가 작아요"></textarea><p class="hint" style="margin-top:8px">AI 가 몇 번째 장·어떤 문구인지 찾아 <b>글자 교체</b>(원래 글자 → 새 글자)와 <b>수정 요청</b>으로 나눕니다. 확인 후 검수에 넣고 바로 AI 수정까지 돌릴 수 있습니다.</p>`,
+      buttons: [{ label: "취소", value: 0 }, { label: "장별로 정리하기", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#fbText", d).focus(), 60); } });
+    const text = ($("#fbText") && $("#fbText").value.trim()) || ""; if (v !== 1) return; if (!text) return UI.toast("붙여넣은 내용이 없습니다", "w");
+    try { await Local.feedback(FS.name, text); } catch (e) { return UI.alert("정리하지 못했습니다", esc(e.message), "d"); }
+    const name = FS.name; this.running = true; UI.toast("AI 가 피드백을 장별로 나누는 중… (30초~1분)");
+    const j = await waitJob("feedback", name); this.running = false;
+    if (j.error) return UI.alert("피드백 정리 실패", esc(j.error), "d");
+    if (FS.name !== name) { UI.toast(`${name} 피드백 정리 완료 — 그 프로젝트를 열면 확인할 수 있습니다`, "o"); return; }
+    await reloadProject(); this.show(j.data);
+  },
+  async show(data) {
+    data = data || FS.feedback; if (!data || !(data.items || []).length) { if (data && (data.general || []).length) return UI.alert("장별로 나눌 요청이 없습니다", esc(data.general.join(" / "))); return UI.toast("정리된 피드백이 없습니다", "w"); }
+    const items = data.items.filter(it => tileByN(it.tile)).map(it => Object.assign({}, it));
+    // 자동 인식(OCR) 글자가 틀렸으면 오타 검사에서 AI 가 읽은 그 줄의 글자로 바로잡는다
+    items.forEach(it => { if (it.kind !== "text" || !it.line) return; const ty = Typo.of(tileByN(it.tile)), rl = ty && ty.fresh && ty.read ? ty.read[it.line] : ""; if (rl && !rl.includes(it.from)) it.from = rl; });
+    const byTile = {}; items.forEach((it, i) => { (byTile[it.tile] = byTile[it.tile] || []).push(Object.assign({ i }, it)); });
+    const copyTxt = [...(data.general || []).map(x => "· " + x), ...(data.questions || []).map(x => "? " + x)].join("\n");
+    const v = await UI.dialog({ title: `피드백 ${items.length}건`, sub: "넣을 항목만 체크하세요. 글자 교체는 원래 글자와 새 글자를 고칠 수 있습니다.", icon: "inbox", tone: "o", wide: true,
+      body: `<div class="fbwrap"><div class="fbl">${Object.keys(byTile).map(n => { const t = tileByN(n); return `<div class="fbt"><img src="${t.f}" alt=""><div class="fbi"><b>${esc(n)}${t.name ? ". " + esc(t.name) : ""}</b>${byTile[n].map(it => `<label class="fbrow"><input type="checkbox" data-fi="${it.i}" checked><span class="fbk ${it.kind}">${it.kind === "text" ? "글자 교체" : "수정"}</span>${it.kind === "text" ? `<span class="fbtx"><input type="text" data-ff="${it.i}" value="${esc(it.from)}"> → <input type="text" data-ft="${it.i}" value="${esc(it.to)}"></span>` : `<span class="fbtx">${esc(it.comment)}${it.box ? "" : " <small>(장 전체)</small>"}</span>`}</label>`).join("")}</div></div>`; }).join("")}</div>
+        ${(data.general || []).length ? `<div class="note i" style="margin-top:10px">${svg("info")}<div class="nb"><b>장을 특정하지 않은 의견</b><br>${data.general.map(esc).join("<br>")}</div></div>` : ""}
+        ${(data.questions || []).length ? `<div class="note w">${svg("warn")}<div class="nb"><b>고객에게 되물을 것</b><br>${data.questions.map(esc).join("<br>")}</div></div>` : ""}</div>`,
+      buttons: [{ label: "닫기", value: 0 }].concat(copyTxt ? [{ label: "의견 복사", value: 3 }] : []).concat([{ label: "검수에 넣기", value: 1 }, { label: "넣고 바로 AI 수정", value: 2, kind: "pri" }]),
+      onOpen(d) { const w = $(".fbwrap", d); if (!w) return; w.oninput = e => { const t = e.target; if (t.dataset.ff != null) items[+t.dataset.ff].from = t.value; if (t.dataset.ft != null) items[+t.dataset.ft].to = t.value; }; w.onchange = e => { const t = e.target; if (t.dataset.fi != null) items[+t.dataset.fi].off = !t.checked; }; } });
+    if (v === 3) { try { await navigator.clipboard.writeText(copyTxt); UI.toast("복사했습니다", "o"); } catch (e) {} return; }
+    if (v !== 1 && v !== 2) return;
+    const n = this.apply(items.filter(it => !it.off));
+    Local.logAdd(FS.name, "feedback", `클라이언트 피드백 ${n}건 검수에 반영`);
+    UI.toast(`피드백 ${n}건을 검수에 넣었습니다`, "o");
+    const first = items.find(it => !it.off); App.curTile = first ? first.tile : null; go("review");
+    if (v === 2) setTimeout(() => ACT.revise(), 300);
+  },
+  apply(list) {
+    let n = 0;
+    list.forEach(it => {
+      const r = App.review[it.tile] && Array.isArray(App.review[it.tile].regions) ? App.review[it.tile] : (App.review[it.tile] = { regions: (App.review[it.tile] || {}).regions || [], note: (App.review[it.tile] || {}).note || "" });
+      if (it.kind === "text" && (it.to || "").trim()) {
+        if (r.regions.some(g => g.kind === "text" && g.from === it.from && g.to === it.to)) return;
+        const text = `글자 교체: "${it.from}" → "${it.to}"`;
+        if (it.box && it.line) r.regions.push(Object.assign(grow(it.box), { kind: "text", from: it.from, to: it.to, text })); else r.note = (r.note ? r.note.replace(/\s+$/, "") + "\n" : "") + text;
+      } else if ((it.comment || "").trim()) {
+        if (it.box) r.regions.push(Object.assign({ x: it.box.x, y: it.box.y, w: it.box.w, h: it.box.h }, { text: it.comment })); else r.note = (r.note ? r.note.replace(/\s+$/, "") + "\n" : "") + it.comment;
+      } else return;
+      n++;
+    });
+    App.saveReview(); FS.saveReviewFile(); renderSide();
+    return n;
+  }
+};
+
+/* ═══ 내보내기: 클라이언트 프리뷰 · 채널별 이미지 (#5) · PSD (#6) ═══ */
+const CH_DEF = [
+  { id: "smartstore", label: "스마트스토어", dir: "스마트스토어", w: 860 },
+  { id: "coupang", label: "쿠팡", dir: "쿠팡", w: 780 },
+  { id: "11st", label: "11번가", dir: "11번가", w: 800 },
+  { id: "gmarket", label: "G마켓·옥션", dir: "G마켓옥션", w: 860 },
+  { id: "own", label: "자사몰", dir: "자사몰", w: 1000 },
+  { id: "orig", label: "원본 크기", dir: "원본", w: 0 }
+];
+const Export = {
+  async open() {
+    if (!App.tiles.length) return UI.toast("내보낼 타일이 없습니다", "w");
+    if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "EXE 로 실행한 상태에서만 내보낼 수 있습니다.", "w");
+    const v = await UI.dialog({ title: "내보내기", sub: `타일 ${App.tiles.length}장 · 지금 왼쪽 메뉴 순서대로`, icon: "down", tone: "b", wide: true,
+      body: `<div class="pmpick three"><button class="pm" data-x="html"><b>${svg("eye")} 클라이언트 프리뷰</b><small>HTML 한 파일. 받는 분이 모바일 폭으로 보고 장별 피드백을 적어 복사해 보냅니다.</small></button>
+        <button class="pm" data-x="ch"><b>${svg("down")} 채널별 이미지</b><small>스마트스토어 860 · 쿠팡 780 등 폭에 맞춘 JPG 를 채널 폴더에 한 번에.</small></button>
+        <button class="pm" data-x="psd"><b>${svg("layers")} PSD (글자 레이어)</b><small>타일 이미지 + 숨긴 편집용 텍스트 레이어. 글자만 바꿔달라는 요청을 포토샵으로.</small></button></div>`,
+      buttons: [{ label: "닫기", value: 0 }], onOpen(d) { $$("[data-x]", d).forEach(b => b.onclick = () => UI._close(b.dataset.x)); } });
+    if (v === "html") return ACT.exportPreview();
+    if (v === "ch") return this.channels();
+    if (v === "psd") return this.psd();
+  },
+  async channels() {
+    const saved = Store.get("chanSel", ["smartstore"]), ws = Store.get("chanW", {}), mode0 = Store.get("chanMode", "each"), split0 = Store.get("chanSplit", 3000);
+    const v = await UI.dialog({ title: "채널별 이미지 내보내기", sub: "채널 폴더(export/채널이름)에 JPG 로 저장합니다. 원본 타일은 손대지 않습니다.", icon: "down", tone: "b", wide: true,
+      body: `<div class="chl">${CH_DEF.map(c => `<label class="chr"><input type="checkbox" data-ch="${c.id}"${saved.includes(c.id) ? " checked" : ""}><b>${esc(c.label)}</b>${c.w ? `<span class="numin"><input type="number" data-cw="${c.id}" value="${ws[c.id] || c.w}" min="300" max="3000" step="10"><em>px 폭</em></span>` : `<span class="hint" style="margin:0">타일 원래 크기</span>`}</label>`).join("")}</div>
+        <div class="fld" style="margin-top:12px"><label>나누는 방식</label><div class="seg" id="chMode"><button data-m="each" class="${mode0 === "each" ? "on" : ""}">장별 (타일 1장 = 파일 1개)</button><button data-m="split" class="${mode0 === "split" ? "on" : ""}">이어붙인 뒤 높이로 자르기</button></div></div>
+        <div class="row2"><label class="srow" style="border:0"><span><b>자를 높이</b><small>이어붙여 자르기일 때 파일 한 장 높이</small></span><span class="numin"><input type="number" id="chSplit" value="${split0}" min="800" max="20000" step="100"><em>px</em></span></label>
+          <label class="srow" style="border:0"><span><b>JPG 품질</b><small>80~90 권장</small></span><span class="numin"><input type="number" id="chQ" value="${SET.jpegQ}" min="50" max="100" step="1"><em></em></span></label></div>
+        <p class="hint">채널 권장 폭은 운영 정책에 따라 바뀔 수 있으니 필요하면 숫자를 고치세요(기억됩니다). 폭보다 작은 타일은 키우지 않고 원래 크기로 둡니다.</p>`,
+      buttons: [{ label: "취소", value: 0 }, { label: "내보내기", value: 1, kind: "pri" }],
+      onOpen(d) { $("#chMode", d).onclick = e => { const b = e.target.closest("[data-m]"); if (b) $$("#chMode button", d).forEach(x => x.classList.toggle("on", x === b)); }; } });
+    if (v !== 1) return;
+    const sel = $$("[data-ch]").filter(x => x.checked).map(x => x.dataset.ch); if (!sel.length) return UI.toast("채널을 하나 이상 고르세요", "w");
+    const wmap = {}; $$("[data-cw]").forEach(x => { const n = clamp(parseInt(x.value, 10) || 860, 300, 3000); wmap[x.dataset.cw] = n; });
+    const mode = ($("#chMode button.on") || {}).dataset ? $("#chMode button.on").dataset.m : "each", split = clamp(parseInt($("#chSplit").value, 10) || 3000, 800, 20000), q = clamp(parseInt($("#chQ").value, 10) || 82, 50, 100);
+    Store.set("chanSel", sel); Store.set("chanW", wmap); Store.set("chanMode", mode); Store.set("chanSplit", split);
+    await FS.saveManifest();
+    UI.toast("이미지 만드는 중…");
+    const done = [];
+    try {
+      for (const id of sel) { const c = CH_DEF.find(x => x.id === id); const n = await this.render(c, c.w ? wmap[id] || c.w : 0, mode, split, q / 100); done.push(`${c.label} ${n}장`); }
+    } catch (e) { return UI.alert("내보내기 실패", esc(e.message), "d"); }
+    Local.logAdd(FS.name, "export", `채널 이미지 — ${done.join(" · ")}`, "export");
+    const r = await UI.dialog({ title: "채널 이미지를 만들었습니다", sub: done.join(" · "), icon: "check", tone: "o", body: `<p class="hint" style="margin:0">프로젝트 폴더의 <code>export\\채널이름</code> 에 있습니다.</p>`, buttons: [{ label: "닫기", value: 0 }, { label: "폴더 열기", value: 1, kind: "pri" }] });
+    if (r === 1) { try { await Local.toolAct("open-folder", { name: FS.name, sub: sel.length === 1 ? "export/" + CH_DEF.find(x => x.id === sel[0]).dir : "export" }); } catch (e) {} }
+  },
+  async bitmap(t, W) {
+    const b = await (await fetch(t.f, { cache: "no-store" })).blob();
+    const full = await createImageBitmap(b);
+    if (!W || full.width <= W) return full;
+    const H = Math.round(full.height * W / full.width);
+    const r = await createImageBitmap(full, { resizeWidth: W, resizeHeight: H, resizeQuality: "high" }); full.close && full.close(); return r;
+  },
+  async render(c, W, mode, split, q) {
+    const dir = "export/" + c.dir; await Local.clearDir(FS.name, dir);
+    const toJpg = cv => new Promise(res => cv.toBlob(res, "image/jpeg", q));
+    const bms = []; for (const t of App.tiles) bms.push(await this.bitmap(t, W));
+    let n = 0;
+    try {
+      if (mode === "each") {
+        for (let i = 0; i < bms.length; i++) { const b = bms[i], cv = document.createElement("canvas"); cv.width = b.width; cv.height = b.height; const x = cv.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, cv.width, cv.height); x.drawImage(b, 0, 0); await Local.saveJpg(FS.name, `${dir}/${pad2(i + 1)}_${App.tiles[i].n}.jpg`, await toJpg(cv)); n++; }
+      } else {
+        const PW = W || Math.max(...bms.map(b => b.width)), hs = bms.map(b => Math.round(b.height * PW / b.width)), total = hs.reduce((a, b) => a + b, 0);
+        for (let y0 = 0, k = 1; y0 < total; y0 += split, k++) {
+          const h = Math.min(split, total - y0), cv = document.createElement("canvas"); cv.width = PW; cv.height = h; const x = cv.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, PW, h); x.imageSmoothingQuality = "high";
+          let top = 0; bms.forEach((b, i) => { const bh = hs[i]; if (top + bh > y0 && top < y0 + h) x.drawImage(b, 0, top - y0, PW, bh); top += bh; });
+          await Local.saveJpg(FS.name, `${dir}/상세_${pad2(k)}.jpg`, await toJpg(cv)); n++;
+        }
+      }
+    } finally { bms.forEach(b => b.close && b.close()); }
+    return n;
+  },
+  async psd() {
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    const hasTypo = !!FS.typo && !Typo.needed();
+    const v = await UI.dialog({ title: "PSD 내보내기", sub: `타일 ${App.tiles.length}장 → export\\psd 에 장별 PSD`, icon: "layers", tone: "b",
+      body: `<p style="margin:0 0 8px">레이어: <b>원본 타일</b>(픽셀 그대로) + <b>편집용 텍스트</b> 그룹(숨김). 글자 위치·크기·색을 자동으로 맞춰 둬서, 눈을 켜고 글자만 고친 뒤 원본 글자 부분을 지우면 됩니다.</p>
+        <div class="note ${hasTypo ? "o" : "w"}">${svg(hasTypo ? "check" : "info")}<div class="nb">${hasTypo ? "오타 검사 결과가 있어 AI 가 읽은 정확한 글자로 텍스트 레이어를 만듭니다." : "오타 검사를 먼저 돌리면 텍스트 레이어에 AI 가 읽은 정확한 글자가 들어갑니다. 지금은 자동 인식 글자라 <b>(자동인식·확인)</b> 표시가 붙습니다."}</div></div>`,
+      buttons: [{ label: "취소", value: 0 }].concat(hasTypo ? [] : [{ label: "오타 검사 먼저", value: 2 }]).concat([{ label: "PSD 만들기", value: 1, kind: "pri" }]) });
+    if (v === 2) return Typo.run();
+    if (v !== 1) return;
+    try { await Local.psd(FS.name); } catch (e) { return UI.alert("PSD 를 시작하지 못했습니다", esc(e.message), "d"); }
+    const name = FS.name; UI.toast("PSD 만드는 중… 장당 1~2초");
+    const j = await waitJob("psd", name, s => { if (s.total) UI.toast(`PSD ${s.done}/${s.total}`); });
+    if (j.error) return UI.alert("PSD 실패", esc(j.error), "d");
+    const r = await UI.dialog({ title: "PSD 를 만들었습니다", sub: `${(j.data || {}).count || 0}장`, icon: "check", tone: "o", body: `<p class="hint" style="margin:0"><code>export\\psd</code> 에 있습니다. 포토샵에서 열 때 '텍스트 레이어 업데이트' 를 누르세요.</p>`, buttons: [{ label: "닫기", value: 0 }, { label: "폴더 열기", value: 1, kind: "pri" }] });
+    if (r === 1) { try { await Local.toolAct("open-folder", { name, sub: "export/psd" }); } catch (e) {} }
+  }
+};
+
+/* ═══ 타일 버전 (#2) ═══ */
+const VSRC = { history: "자동 백업", v_prev: "이전본", edits: "수정 시도" };
+const Versions = {
+  list(t) { return (FS.history || {})[t.n] || []; },
+  html(t) {
+    const vs = this.list(t);
+    return `<h5>버전 <span class="cnt">${vs.length ? vs.length + "개" : ""}</span></h5>` + (!vs.length ? `<p class="hint" style="margin:0">아직 이전 버전이 없습니다. AI 로 다시 만들거나 수정하면 자동으로 쌓이고, 여기서 되돌릴 수 있습니다.</p>`
+      : `<div class="vstrip"><div class="vth cur" title="지금 버전"><img src="${t.f}" alt=""><span>지금</span></div>${vs.map((v, i) => `<button class="vth" data-ver="${i}" title="${fmtT(v.at)} · ${esc(VSRC[v.src] || v.src)} — 눌러서 비교"><img src="${v.url}" alt="" loading="lazy"><span>${fmtT(v.at)}</span></button>`).join("")}</div>`);
+  },
+  async compare(t, i) {
+    const v = this.list(t)[i]; if (!v) return;
+    const r = await UI.dialog({ title: `${t.n} 버전 비교`, sub: `왼쪽 지금 · 오른쪽 ${fmtT(v.at)} (${esc(VSRC[v.src] || v.src)})`, icon: "history", tone: "b", wide: true,
+      body: `<div class="vcmp"><figure><img src="${t.f}" alt=""><figcaption>지금</figcaption></figure><figure><img src="${v.url}" alt=""><figcaption>${fmtT(v.at)} · ${esc(VSRC[v.src] || v.src)}</figcaption></figure></div><p class="hint" style="margin-top:8px">이미지를 누르면 크게 봅니다. 되돌려도 지금 버전은 기록에 남아 다시 돌아올 수 있습니다.</p>`,
+      buttons: [{ label: "닫기", value: 0 }, { label: "이 버전으로 되돌리기", value: 1, kind: "pri" }], onOpen(d) { $$(".vcmp img", d).forEach(im => im.onclick = () => UI.lightbox(im.src)); } });
+    if (r !== 1) return;
+    try { await Local.restore(FS.name, t.n, v.file); delete Read.cache[t.f]; await reloadProject(); UI.toast(`${t.n} 을(를) ${fmtT(v.at)} 버전으로 되돌렸습니다`, "o"); if (App.view === "review") Review.go(Review.cur); else go(App.view); }
+    catch (e) { UI.alert("되돌리지 못했습니다", esc(e.message), "d"); }
+  }
+};
+
+/* ═══ 튜토리얼 + 단축키 (#30) ═══ */
+const TOUR = [
+  { t: "1. 프로젝트 만들고 사진 넣기", b: `왼쪽 <b>새 프로젝트</b> → 상품 이름만 적으면 폴더가 생깁니다. 사진은 끌어다 놓거나 <kbd>Ctrl</kbd>+<kbd>V</kbd>. 다 올린 뒤 <b>분석 후 적용</b>을 누르면 AI 가 사진을 보고 브리프 빈 칸을 채웁니다.`, i: "photo" },
+  { t: "2. 제품 컷 확인 → AI 로 만들기", b: `저화질 사진이면 <b>제품 컷 만들기</b>로 AI 재현 컷을 원본과 나란히 보고 승인하세요. 브리프 마지막에서 <b>AI로 상세페이지 만들기</b> — 바로 제작하거나 <b>대기열·오늘 밤 예약</b>으로 걸어둘 수 있습니다. 끊기면 자동으로 이어서 합니다.`, i: "sparkles" },
+  { t: "3. 검수 → 수정 → 내보내기", b: `검수에서 <kbd>D</kbd> 영역 잡기, <kbd>T</kbd> 글자 수정(원래 글자 자동 인식), <b>오타 검사</b>·<b>가독성</b>으로 기계가 먼저 거릅니다. 고객 피드백은 <b>피드백 붙여넣기</b>. 끝나면 <b>내보내기</b>로 프리뷰 HTML·채널별 JPG·PSD.`, i: "check" }
+];
+async function runTour() {
+  for (let i = 0; i < TOUR.length;) {
+    const s = TOUR[i];
+    const v = await UI.dialog({ title: s.t, sub: `re:boot 콘솔 사용법 ${i + 1}/${TOUR.length}`, icon: s.i, tone: "b", body: `<p style="margin:0">${s.b}</p><div class="tdots">${TOUR.map((x, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div><p class="hint" style="margin:10px 0 0"><kbd>?</kbd> 를 누르면 언제든 단축키 표가 뜹니다.</p>`,
+      buttons: [{ label: "건너뛰기", value: "skip" }].concat(i ? [{ label: "← 이전", value: "prev" }] : []).concat([{ label: i === TOUR.length - 1 ? "시작하기" : "다음 →", value: "next", kind: "pri" }]) });
+    if (v === "prev") i--; else if (v === "next") i++; else break;
+  }
+  Store.set("tourDone", true);
+}
+const KEYS = [["어디서나", [["?", "단축키 표"], ["Alt + 1~5", "홈 · 프로젝트 · 브리프 · 타일 · 검수"], ["Ctrl + V", "사진 붙여넣기 (글 입력 중이 아닐 때)"], ["F5", "새로 고침"], ["Esc", "창·확대 닫기"]]],
+  ["타일", [["Ctrl + 휠 / + / −", "배율"], ["Ctrl + 0", "100%"], ["M", "모바일 프레임 켜기/끄기"], ["더블클릭", "그 장 검수로"]]],
+  ["검수", [["← →  Enter", "이전 · 다음 장"], ["D", "영역 잡기"], ["T", "글자 수정 (원래 글자 자동 인식)"], ["Del", "선택한 영역 삭제"], ["휠 · 드래그 · 더블클릭", "확대 · 이동 · 맞춤↔100%"]]]];
+function showKeys() {
+  if ($(".ovl.on")) return;
+  UI.dialog({ title: "단축키", icon: "keyboard", tone: "b", wide: true, body: `<div class="keys">${KEYS.map(([g, ks]) => `<div><h5>${g}</h5>${ks.map(([k, d]) => `<div class="krow"><span>${k.split(" ").map(x => /^[+/~·]$/.test(x) || x === "" ? esc(x) : `<kbd>${esc(x)}</kbd>`).join(" ")}</span><em>${esc(d)}</em></div>`).join("")}</div>`).join("")}</div>`,
+    buttons: [{ label: "튜토리얼 다시 보기", value: 1 }, { label: "닫기", value: 0, kind: "pri" }] }).then(v => { if (v === 1) runTour(); });
+}
+document.addEventListener("keydown", e => {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) || $(".ovl.on") || $(".lbx.on")) return;
+  if (e.key === "?" && !e.ctrlKey && !e.altKey) { e.preventDefault(); showKeys(); return; }
+  if (e.altKey && !e.ctrlKey && /^[1-5]$/.test(e.key)) { e.preventDefault(); go(["home", "projects", "brief", "tiles", "review"][+e.key - 1]); return; }
+  if (App.view === "tiles" && (e.key === "m" || e.key === "M") && !e.ctrlKey && !e.altKey) { Tiles.mode = Tiles.mode === "mobile" ? "strip" : "mobile"; go("tiles"); }
+});
 
 /* ═══ 액션 ═══ */
 const photoRows = () => FS.analysis.map(a => ({ name: a.name, w: a.w, h: a.h, size: a.size, orient: a.orient, resGrade: a.resGrade, bgSimple: a.bgSimple, palette: (a.pal || []).map(x => x.hex) }));
@@ -1236,28 +1969,35 @@ const ACT = {
     if (v === 1) { try { await navigator.clipboard.writeText(txt); UI.toast("복사했습니다", "o"); } catch (e) { UI.toast("복사 실패", "d"); } }
     if (v === 2) { const r = await FS.write("order.json", JSON.stringify({ brief: App.brief, review: App.review, order: txt }, null, 2)); UI.toast(r.ok ? `저장 완료 — ${r.where}` : "order.json 다운로드됨", r.ok ? "o" : "w"); }
   },
-  /* 브리프 → order.json → (EXE) 이 창에서 바로 제작 */
+  /* 브리프 → order.json → (EXE) 이 창에서 바로 제작 · 대기열 · 야간 예약 */
   async make() {
     if (!App.secDone("product")) { if (App.view !== "brief") go("brief"); setTimeout(() => openCard("product"), 80); return UI.toast("상품 섹션(상품명·카테고리)부터 채워주세요", "w"); }
-    const p = App.progress(), order = buildOrder();
-    const r = await FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order, photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: photoModeOf() }, null, 2));
+    const p = App.progress();
+    await writeOrder();
     const cmd = `${FS.name || "프로젝트"} 만들어줘`;
     const rd = Local.desktop ? await aiReady() : { ok: false };
     if (!FS.analysis.length) return UI.alert("사진이 없습니다", "제품 사진을 먼저 넣어주세요. 사진 없이는 제품이 들어간 타일을 만들 수 없습니다.", "w");
+    if (Local.desktop && !Usage.data) await Promise.race([Usage.load(), sleep(2500)]);
+    const cutHint = Local.desktop && photoModeOf() === "regen" && !FS.approved;
     const btns = [{ label: "닫기", value: 0 }];
-    if (Local.desktop) btns.push(rd.ok ? { label: "여기서 바로 제작", value: 3, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" });
+    if (Local.desktop) { if (rd.ok) { btns.push({ label: "대기열·예약", value: 6 }); btns.push({ label: "여기서 바로 제작", value: 3, kind: "pri" }); } else btns.push(rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" }); }
     else btns.push({ label: "명령 복사", value: 1, kind: "pri" });
     const v = await UI.dialog({ title: "제작 준비가 됐습니다", sub: `브리프와 사진 분석을 정리했습니다.`, icon: "sparkles", tone: rd.ok ? "o" : "b",
-      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행 로그가 오른쪽 아래에 뜹니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + "." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}<p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${photoModeOf() === "keep" ? "원본 합성" : "AI 고화질 재현"}</p>`,
-      buttons: btns });
+      body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행은 오른쪽 아래 패널에 뜨고, 끊기면 자동으로 이어서 합니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + ". <b>대기열·예약</b>으로 밤에 돌려도 됩니다." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}
+        ${Local.desktop && Usage.line() ? `<div class="note ${Usage.warn() ? "w" : "i"}">${svg(Usage.warn() ? "warn" : "gauge")}<div class="nb">${esc(Usage.line())}${Usage.warn() ? "<br><b>한도에 가깝습니다</b> — 중간에 멈출 수 있어요. 리셋 뒤로 예약하는 것을 권장합니다." : ""}</div></div>` : ""}
+        ${cutHint ? `<div class="note b">${svg("layers")}<div class="nb"><b>제품 컷을 먼저 승인하면</b> 라벨·로고가 틀린 채 15장을 다시 만드는 일을 막습니다. <button class="btn sm" data-mk="cut" style="margin-left:4px">제품 컷 먼저 만들기</button></div></div>` : ""}
+        <p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${photoModeOf() === "keep" ? "원본 합성" : "AI 고화질 재현"}${FS.approved ? " · 승인 컷 " + esc(FS.approved.file) : ""}${FS.ref && FS.ref.summary ? " · 경쟁사 분석 반영" : ""}</p>`,
+      buttons: btns, onOpen(d) { const b = $("[data-mk]", d); if (b) b.onclick = () => UI._close(7); } });
     if (v === 3) return ACT.runAI("make");
+    if (v === 6) return enqueue({ mode: "make" }, `제작 — ${FS.name}`);
+    if (v === 7) return ACT.productCut();
     if (v === 4) return go("settings");
     if (v === 5) return ACT.runClaudeTerm();
-    const txt = v === 1 ? cmd : v === 2 ? order : null; if (!txt) return;
+    const txt = v === 1 ? cmd : null; if (!txt) return;
     try { await navigator.clipboard.writeText(txt); UI.toast("복사했습니다 — 대화창에 붙여넣으세요", "o"); } catch (e) { UI.toast("복사 실패", "d"); }
   },
-  async runAI(mode) {
-    try { await Local.run(FS.name, mode, "", photoModeOf()); RunUI.show(mode === "make" ? `제작 — ${FS.name}` : `검수 반영 — ${FS.name}`, FS.name, mode); UI.toast("AI 작업을 시작했습니다", "o"); }
+  async runAI(mode, extra) {
+    try { await Local.run(FS.name, mode, "", photoModeOf(), extra); RunUI.show(runTitle(mode, FS.name, extra), FS.name, mode); UI.toast("AI 작업을 시작했습니다", "o"); Usage.load(); }
     catch (e) { UI.alert("시작 실패", esc(e.message), "d"); }
   },
   /* 검수 영역·코멘트 → review.json + review/NN_marked.png → (EXE) AI 수정 */
@@ -1266,13 +2006,14 @@ const ACT = {
     if (!targets.length) return UI.toast("영역이나 요청을 먼저 남겨주세요", "w");
     if (!Local.ok || !FS.name) return UI.alert("서버가 필요합니다", "EXE 로 실행한 상태에서만 됩니다.", "w");
     const ok = await UI.dialog({ title: "검수 반영 — AI 수정", sub: `${targets.length}장 · 영역 ${App.tally().regions}개. 표시된 영역과 코멘트만 반영하고 나머지는 그대로 둡니다.`, icon: "sparkles", tone: "o",
-      body: `<ul class="ul">${targets.map(t => { const r = App.review[t.n]; return `<li><b>${esc(t.n)}${t.name ? ". " + esc(t.name) : ""}</b> — 영역 ${(r.regions || []).length}개${(r.note || "").trim() ? " · 전체 요청" : ""}</li>`; }).join("")}</ul><p class="hint" style="margin-top:10px">영역 표시본이 <code>review/</code> 에 저장되고 AI 가 그 번호를 보고 고칩니다. 원본은 <code>tiles/v_prev/</code> 에 백업됩니다.</p>`,
-      buttons: [{ label: "취소", value: 0 }, { label: Local.desktop ? "AI 수정 시작" : "파일 저장 + 명령 복사", value: 1, kind: "pri" }] });
+      body: `<ul class="ul">${targets.map(t => { const r = App.review[t.n], nt = (r.regions || []).filter(g => g.kind === "text").length; return `<li><b>${esc(t.n)}${t.name ? ". " + esc(t.name) : ""}</b> — 영역 ${(r.regions || []).length}개${nt ? ` (글자 교체 ${nt})` : ""}${(r.note || "").trim() ? " · 전체 요청" : ""}</li>`; }).join("")}</ul>${Local.desktop && Usage.line() ? `<p class="hint" style="margin-top:8px">${esc(Usage.line())}</p>` : ""}<p class="hint" style="margin-top:10px">영역 표시본이 <code>review/</code> 에 저장되고 AI 가 그 번호를 보고 고칩니다. 고치기 전 버전은 자동 백업되어 검수의 <b>버전</b>에서 되돌릴 수 있습니다.</p>`,
+      buttons: [{ label: "취소", value: 0 }].concat(Local.desktop ? [{ label: "대기열·예약", value: 3 }] : []).concat([{ label: Local.desktop ? "AI 수정 시작" : "파일 저장 + 명령 복사", value: 1, kind: "pri" }]) });
     if (!ok) return;
     UI.toast("영역 표시본 만드는 중…");
     try { for (const t of targets) await Review.buildMarked(t); await FS.saveReviewFile(); }
     catch (e) { return UI.alert("저장 실패", esc(e.message), "d"); }
     const cmd = `${FS.name} 검수 반영해줘`;
+    if (ok === 3) return enqueue({ mode: "revise" }, `검수 반영 — ${FS.name}`);
     if (Local.desktop) {
       const rd = await aiReady();
       if (rd.ok) return ACT.runAI("revise");
@@ -1300,6 +2041,61 @@ const ACT = {
   async reset() { const ok = await UI.confirm("전체 초기화", "브리프와 검수 내용을 모두 지웁니다. 되돌릴 수 없습니다.", { ok: "지우기", danger: true }); if (!ok) return; Store.del("brief"); Store.del("review"); UI.toast("초기화했습니다"); setTimeout(() => location.reload(), 500); }
 };
 
+/* v4.8 액션 */
+async function writeOrder() {
+  return FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order: buildOrder(), photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: photoModeOf(), approvedCut: FS.approved ? FS.approved.file : "", ref: FS.ref && FS.ref.summary ? { summary: FS.ref.summary, ideas: FS.ref.ideas || [], differ: FS.ref.differ || [], avoid: FS.ref.avoid || [] } : null }, null, 2));
+}
+Object.assign(ACT, {
+  exportMenu() { return Export.open(); },
+  feedback() { return Feedback.open(); },
+  usage() { return Usage.open(); },
+  tour() { return runTour(); },
+  keys() { showKeys(); },
+  async timeline(name) {
+    name = typeof name === "string" ? name : "";
+    let j; try { j = await Local.log(name, 400); } catch (e) { return UI.toast(e.message, "w"); }
+    UI.dialog({ title: name ? `작업 기록 — ${esc(name)}` : "작업 기록 — 전체", sub: "언제 무엇을 만들고·고치고·내보냈는지 자동으로 남습니다.", icon: "history", tone: "b", wide: true,
+      body: `<div class="tlwrap">${tlHtml(j.items, !name)}</div>`, buttons: [{ label: "닫기", value: 0, kind: "pri" }], onOpen(d) { const w = $(".tlwrap", d); if (w) w.onclick = e => tlClick(e); } });
+  },
+  /* 실패·중단된 작업 이어서 하기 (#13) */
+  async resume(name) {
+    name = typeof name === "string" && name ? name : FS.name; if (!name) return;
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    try { await Local.run(name, "resume"); RunUI.show(`이어서 하기 — ${name}`, name, "make"); UI.toast("이어서 진행합니다 — 이미 만든 파일은 그대로 둡니다", "o"); Local._projects = null; if (App.view === "home") go("home"); }
+    catch (e) { UI.alert("이어서 하지 못했습니다", esc(e.message), "d"); }
+  },
+  /* 섹션별 부분 재생성 (#10): 이 장만 다시 / 뒤에 1장 추가 */
+  async tileRun(n, op) {
+    const t = tileByN(n); if (!t) return;
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    const ins = op === "insert";
+    const v = await UI.dialog({ title: ins ? `${n} 뒤에 1장 추가` : `${n} 이 장만 다시 만들기`, sub: ins ? "앞뒤 장의 폭·톤·서체에 맞춰 새 장을 한 장 끼워 넣습니다." : "이 장만 새로 만듭니다. 지금 버전은 자동 백업되어 검수의 버전에서 되돌릴 수 있습니다.", icon: ins ? "plus" : "refresh", tone: "b",
+      body: `<div class="vpair"><img src="${t.f}" alt=""><div><b>${esc(n)}${t.name ? ". " + esc(t.name) : ""}</b><p class="hint" style="margin:4px 0 0">${esc(t.copy || "")}</p></div></div>
+        <div class="fld" style="margin-top:12px"><label>${ins ? "어떤 내용의 장인가요?" : "무엇을 바꿀까요?"} <span class="opt">${ins ? "필수" : "선택"}</span></label><textarea id="trNote" placeholder="${ins ? "예: 사용 방법 3단계 (충전 → 노즐 끼우기 → 버튼)" : "예: 배경을 차 실내로, 헤드카피 더 크게 — 비우면 같은 기획으로 완성도만 높입니다"}"></textarea></div>
+        <p class="hint">${Usage.line() ? esc(Usage.line()) + " · " : ""}이미지 약 1~2장 분량 · 2~5분</p>`,
+      buttons: [{ label: "취소", value: 0 }, { label: "대기열·예약", value: 2 }, { label: "지금 만들기", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#trNote", d).focus(), 60); } });
+    const note = ($("#trNote") && $("#trNote").value.trim()) || "";
+    if (v !== 1 && v !== 2) return;
+    if (ins && !note) return UI.toast("추가할 장의 내용을 적어주세요", "w");
+    const extra = { tile: n, op: ins ? "insert" : "regen", note };
+    if (v === 2) return enqueue(Object.assign({ mode: "tile" }, extra), `${n} ${ins ? "뒤에 추가" : "다시"} — ${FS.name}`);
+    const rd = await aiReady(); if (!rd.ok) return rd.fix ? (await UI.confirm("바로 실행할 수 없습니다", esc(rd.why), { ok: "연결 설정으로" })) && go("settings") : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
+    return ACT.runAI("tile", extra);
+  },
+  /* 제품 컷 먼저 (#1) */
+  async productCut(again) {
+    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
+    if (!(FS.images || []).length) return UI.toast("원본 사진을 먼저 넣어주세요", "w");
+    const v = await UI.dialog({ title: again ? "제품 컷 다시 만들기" : "제품 컷 먼저 만들기", sub: "원본 사진을 참고해 로고·라벨 글자·형태·색은 그대로, 화질만 스튜디오급으로 2장(누끼·연출)을 만듭니다. 2K, 라벨 글자 한 자씩 대조.", icon: "sparkles", tone: "b",
+      body: `<div class="fld"><label>연출 컷 요청 <span class="opt">선택</span></label><textarea id="pcNote" placeholder="예: 대리석 위, 자연광, 따뜻한 톤 — 비우면 브리프 분위기대로${again ? "\n이전 컷에서 틀린 점(예: 라벨 두 번째 줄 글자)을 적으면 더 정확해집니다" : ""}"></textarea></div><p class="hint">${Usage.line() ? esc(Usage.line()) + " · " : ""}이미지 약 2~4장 분량 · 3~6분</p>`,
+      buttons: [{ label: "취소", value: 0 }, { label: "만들기", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#pcNote", d).focus(), 60); } });
+    const note = ($("#pcNote") && $("#pcNote").value.trim()) || ""; if (v !== 1) return;
+    await ACT.saveBrief(true); await writeOrder();
+    const rd = await aiReady(); if (!rd.ok) return UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
+    return ACT.runAI("productcut", { note });
+  }
+});
+
 function buildOrder() {
   const L = [], b = App.brief, s = FS.summary, p = App.progress();
   L.push(`[${FS.name || Store.get("lastProject", "프로젝트")}] 작업 요청`, `작성: ${new Date().toLocaleString("ko-KR")}`, "");
@@ -1313,13 +2109,15 @@ function buildOrder() {
   const blocked = sel.filter(id => (id === "reviews" && !hasReviews) || (id === "awards" && !hasAwards));
   if (blocked.length) L.push("  ⚠ 자료 없음 → 제작 보류: " + blocked.map(id => catOf(id).label).join(", "));
   L.push("");
+  if (FS.approved) L.push("■ 승인된 제품 컷", `  product/${FS.approved.file} — 원본과 대조해 승인. 제품이 나오는 타일은 이 컷을 그대로 합성`, "");
+  if (FS.ref && FS.ref.summary) { L.push("■ 경쟁사 참고 (구성·흐름만 참고, 문구·이미지 복제 금지)", "  " + FS.ref.summary); (FS.ref.ideas || []).forEach(x => L.push("  · 적용: " + x)); (FS.ref.differ || []).forEach(x => L.push("  · 차별화: " + x)); (FS.ref.avoid || []).forEach(x => L.push("  · 피할 것: " + x)); L.push(""); }
   if (s) { L.push("■ 사진 분석", `  ${s.total}장 · 평균 긴 변 ${s.avgLong}px · 누끼 적합 ${s.cuttable}장 · 포인트 컬러 ${s.accent}`); if (s.low) L.push(`  ⚠ 해상도 부족 ${s.low}장 — ${s.lowNames.join(", ")} → 업스케일 후 합성`); L.push(""); }
   if (App.tiles.length) {
     const todo = []; let regions = 0;
     L.push(`■ 페이지 순서 (${App.tiles.length}장)`, "   " + App.tiles.map(t => t.n).join(" → "), "");
     App.tiles.forEach(t => { const r = App.review[t.n]; if (!App.hasReq(t.n)) return;
       const x = [`▸ ${t.n}. ${t.name || ""}  — review/${t.n}_marked.png`];
-      (r.regions || []).forEach((g, i) => { regions++; x.push(`   ${i + 1}) 영역 x${Math.round(g.x * 100)}% y${Math.round(g.y * 100)}% w${Math.round(g.w * 100)}% h${Math.round(g.h * 100)}%: ${(g.text || "").trim() || "(코멘트 없음)"}`); });
+      (r.regions || []).forEach((g, i) => { regions++; const at = `x${Math.round(g.x * 100)}% y${Math.round(g.y * 100)}% w${Math.round(g.w * 100)}% h${Math.round(g.h * 100)}%`; x.push(g.kind === "text" ? `   T${i + 1}) [글자 교체] "${g.from || ""}" → "${g.to || ""}" (영역 ${at})` : `   ${i + 1}) 영역 ${at}: ${(g.text || "").trim() || "(코멘트 없음)"}`); });
       if ((r.note || "").trim()) r.note.trim().split("\n").forEach(ln => ln.trim() && x.push("   전체: " + ln.trim()));
       todo.push(x.join("\n")); });
     if (todo.length) L.push(`■ 검수 수정 요청 (${todo.length}장 · 영역 ${regions}개)`, "   규칙: 표시된 영역만 바꾸고 나머지·톤앤매너·서체·팔레트는 그대로. 원본은 tiles/v_prev/ 백업.", "", todo.join("\n\n"), "");
@@ -1342,8 +2140,8 @@ async function boot() {
   go(!fresh && restored ? Store.get("view", "home") : "home");
   if (restored) UI.toast(`${FS.name} — 이어서 작업합니다`, "o");
   else if (!Local.ok) UI.toast("EXE 로 실행해 주세요 — 지금은 화면만 보입니다", "w");
-  if (Local.desktop) { try { const all = (await Local.runsAll()).runs || []; const st = all.find(r => r.running && r.name === FS.name) || all.find(r => r.running); if (st) RunUI.show(`${st.mode === "make" ? "제작" : "검수 반영"} — ${st.name}`, st.name, st.mode); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
+  if (Local.desktop) { Usage.start(); QueueUI.load().then(() => renderSide()); try { const all = (await Local.runsAll()).runs || []; const st = all.find(r => r.running && r.name === FS.name) || all.find(r => r.running); if (st) RunUI.show(runTitle(st.mode, st.name, st), st.name, st.mode); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
 }
-document.addEventListener("DOMContentLoaded", boot);
-window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest };
+document.addEventListener("DOMContentLoaded", () => { boot().then(() => { if (!Store.get("tourDone", false)) setTimeout(runTour, 900); }); });
+window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest, Read, Typo, Usage, QueueUI, Cut, Ref, Feedback, Export, Versions, Projects, Home };
 })();
