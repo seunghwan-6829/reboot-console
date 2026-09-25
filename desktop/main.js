@@ -227,6 +227,15 @@ ${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, �
   revise: n => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라: 단계가 바뀔 때마다 "▶ 단계: 준비|영역 확인|수정 생성|오타 검수|교체", 타일 한 장을 끝낼 때마다 "▶ 타일: n/N 섹션이름".
 ${n} 검수 반영해줘. 먼저 README.md 의 규칙을 읽는다. ${n}/review.json 을 읽어라 — 타일마다 regions(이미지 기준 0~1 비율 x,y,w,h 와 코멘트) 와 note 가 있고, ${n}/review/NN_marked.png 에는 그 영역이 빨간 번호 박스로 표시돼 있다. 각 타일에 대해: 원본 tiles/NN.png 를 image_references 로 넣고 marked 이미지도 함께 참조해 '번호 영역만 코멘트대로 바꾸고 나머지는 전부 동일하게 유지'(MAKE EXACTLY N CHANGES) 방식으로 Higgsfield gpt_image_2_5 편집을 돌린다. 톤앤매너·팔레트·서체·제품 형태는 요청에 명시되지 않는 한 절대 바꾸지 않는다. 결과는 tiles/edits/NN_v{k}.png 에 저장하고 한 글자씩 대조한 뒤 원본을 tiles/NN.png 로 교체하기 전에 원본을 tiles/v_prev/ 에 백업한다. 끝나면 마지막 줄에 '완료: 수정 N장' 이라고 답한다.`
 };
+/* AI 쪽 오류를 사람 말로 */
+function friendlyErr(t) {
+  t = String(t || "");
+  if (/credit balance is too low/i.test(t)) return "Max 플랜 사용량 한도에 도달했고 '추가 사용량' 잔액이 0입니다 — claude.ai 설정 → 사용량에서 리셋 시각을 확인하거나 추가 사용량을 충전하세요. (" + t.slice(0, 80) + ")";
+  if (/rate limit|429|usage limit|limit reached/i.test(t)) return "사용량 한도에 도달했습니다 — 리셋 시각 이후 다시 시도하세요. (" + t.slice(0, 120) + ")";
+  if (/not logged in|authentication|401|invalid api key/i.test(t)) return "Claude Code 로그인이 풀렸습니다 — 설정 → 연결에서 다시 로그인하세요. (" + t.slice(0, 120) + ")";
+  if (/max turns/i.test(t)) return "작업이 턴 한도에 걸려 중단됐습니다 — 다시 실행하면 이어서 진행합니다. (" + t.slice(0, 120) + ")";
+  return "AI 응답 오류: " + t.slice(0, 300);
+}
 const STAGES = { make: ["준비", "사진 분석", "기획안", "타일 생성", "오타 검수", "정리"], revise: ["준비", "영역 확인", "수정 생성", "오타 검수", "교체"], custom: ["준비", "작업", "정리"] };
 const RUNS = new Map();                                   // 프로젝트 이름 → 실행 객체 (동시에 여러 프로젝트 제작 가능)
 const anyRunning = () => [...RUNS.values()].some(r => r.proc && r.exit == null);
@@ -270,7 +279,8 @@ const RUN_PROTO = {
     this.name = name; this.mode = mode; this.lines = []; this.done = false; this.exit = null; this.startedAt = Date.now();
     this.stage = ""; this.stageIdx = -1; this.tileDone = 0; this.tileTotal = 0; this.tileName = ""; this.last = "";
     // 프롬프트는 stdin 으로 — 한글·공백이 든 인자를 cmd.exe 가 쪼개 버린다(첫 단어만 전달되는 사고)
-    const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
+    // 사용자 기본 모델이 opus[1m](1M 컨텍스트)이면 Max 한도를 훨씬 빨리 소진한다 → 일반 opus 로 고정
+    const args = ["-p", "--model", "claude-opus-5", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Bash", "mcp__higgsfield", "WebFetch"];
     let p;
     try { p = spawn("claude", args, { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
@@ -294,7 +304,7 @@ const RUN_PROTO = {
       }
     } else if (j.type === "result") {
       this.push("sys", (j.is_error ? "오류로 끝남" : "완료") + (j.total_cost_usd != null ? ` · $${(+j.total_cost_usd).toFixed(3)}` : "") + (j.num_turns ? ` · ${j.num_turns}턴` : ""));
-      if (j.result && j.is_error) this.push("err", String(j.result).slice(0, 1000));
+      if (j.result && j.is_error) this.push("err", friendlyErr(String(j.result)));
     } else if (j.type === "system" && j.subtype === "init") {
       this.push("sys", `모델 ${j.model || ""} · MCP ${(j.mcp_servers || []).map(m => m.name + ":" + m.status).join(", ") || "없음"}`);
     }
@@ -368,7 +378,7 @@ ${photos.map(p => "- " + p).join("\n")}
       this.running = false;
       try {
         const j = JSON.parse(out); const txt = String(j.result || "");
-        if (j.is_error) throw new Error("AI 응답 오류: " + txt.slice(0, 200));
+        if (j.is_error) throw new Error(friendlyErr(txt));
         const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error("응답에 JSON 이 없습니다 — " + txt.slice(0, 160));
         const data = JSON.parse(m[0]); data.at = new Date().toISOString(); data.photos = photos.map(p => path.basename(p)); data.cost = j.total_cost_usd || null;
         this.data = data; fs.writeFileSync(path.join(d, "suggest.json"), JSON.stringify(data, null, 2), "utf8");
