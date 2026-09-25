@@ -145,12 +145,15 @@ async function toolStatus() {
     for (const p of Object.values(j.projects || {})) if (p && p.mcpServers && p.mcpServers.higgsfield) hfReg = true;
   } catch (e) {}
   try { const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude", ".credentials.json"), "utf8")); hfAuth = Object.keys(c.mcpOAuth || {}).some(k => k.startsWith("higgsfield|")); } catch (e) {}
+  // 토큰이 있어도 만료·무효일 수 있다 → 실제 연결 상태(claude mcp list)로 확인, 5분 캐시
+  if (hfReg && hfAuth) { const now = Date.now(); if (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000) { const out = await sh2("claude mcp list", 60000); MCPCHK.at = now; const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); } hfAuth = MCPCHK.ok; }
   return { ok: true, root: ROOT, node,
     claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "", org: (claudeAuth && claudeAuth.orgName) || "", plan: (claudeAuth && claudeAuth.subscriptionType) || "", keySource: (claudeAuth && claudeAuth.apiKeySource) || "" },
     codex: { installed: !!codexV, version: codexV.replace(/^codex-cli\s*/i, ""), loggedIn: codexIn },
     higgsfield: { connected: hfReg, authed: hfAuth },
     runs: [...RUNS.values()].map(r => r.summary()), run: (() => { const r = [...RUNS.values()].find(x => x.proc && x.exit == null); return r ? r.summary() : { running: false }; })() };
 }
+const MCPCHK = { at: 0, ok: false, line: "" };
 /* 창 없이 실행 — 로그인 명령은 스스로 브라우저를 연다. 결과는 상태 폴링으로 확인. */
 const hidden = {};
 function spawnHidden(key, cmd, args) {
@@ -182,18 +185,18 @@ async function toolAction(q) {
       spawnHidden("claude-login", "claude", ["auth", "login", "--claudeai"]);   // 구독(Max/Pro) 경로로 — Console 키로 붙으면 API 과금·크레딧 오류
       return { ok: true, message: "브라우저에서 Anthropic 로그인을 마치세요", poll: true };
     case "logout-claude":
-      await sh("claude auth logout", 12000); return { ok: true, message: "로그아웃했습니다", poll: true };
+      await sh("claude auth logout", 12000); MCPCHK.at = 0; return { ok: true, message: "로그아웃했습니다 — 다시 로그인하면 Higgsfield 인증도 다시 필요할 수 있습니다", poll: true };
     case "login-codex":
       spawnHidden("codex-login", "codex", ["login"]);
       return { ok: true, message: "브라우저에서 ChatGPT 로그인을 마치세요", poll: true };
     case "add-mcp": {
       const out = await new Promise(res => exec(`claude mcp add --transport http --scope user higgsfield ${HIGGSFIELD_URL}`, { timeout: 20000, windowsHide: true, encoding: "utf8" }, (err, so, se) => res({ err, txt: String(so || "") + String(se || "") })));
       if (out.err && !/already exists/i.test(out.txt)) return { ok: false, error: "MCP 등록 실패: " + out.txt.trim().slice(0, 300) };
-      spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
+      MCPCHK.at = 0; spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
       return { ok: true, message: "등록 완료 — 브라우저에서 Higgsfield 인증을 마치세요", poll: true };
     }
     case "auth-mcp":
-      spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
+      MCPCHK.at = 0; spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
       return { ok: true, message: "브라우저에서 Higgsfield 인증을 마치세요", poll: true };
     case "run-claude": {                       // 터미널로 열기 (대화형)
       const name = q.get("name") || "";
@@ -307,6 +310,8 @@ const RUN_PROTO = {
       if (j.result && j.is_error) this.push("err", friendlyErr(String(j.result)));
     } else if (j.type === "system" && j.subtype === "init") {
       this.push("sys", `모델 ${j.model || ""} · MCP ${(j.mcp_servers || []).map(m => m.name + ":" + m.status).join(", ") || "없음"}`);
+      const hf = (j.mcp_servers || []).find(m => m.name === "higgsfield");
+      if (!hf || /needs-auth|failed|error/i.test(hf.status || "")) { this.push("err", "Higgsfield MCP 가 연결되지 않았습니다(" + (hf ? hf.status : "미등록") + ") — 설정 → 연결에서 Higgsfield 인증을 다시 하세요. 이미지 생성이 안 되므로 작업을 중단합니다."); MCPCHK.at = 0; setTimeout(() => this.stop(), 300); }
     }
   },
   stop() { if (this.proc && this.exit == null) { try { if (IS_WIN) exec(`taskkill /PID ${this.proc.pid} /T /F`, { windowsHide: true }); else this.proc.kill("SIGTERM"); } catch (e) {} this.push("sys", "사용자가 중단"); return { ok: true, message: "중단했습니다" }; } return { ok: false, error: "실행 중이 아닙니다" }; }
