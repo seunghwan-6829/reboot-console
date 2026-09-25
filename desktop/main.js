@@ -146,14 +146,19 @@ async function toolStatus() {
   } catch (e) {}
   try { const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude", ".credentials.json"), "utf8")); hfAuth = Object.keys(c.mcpOAuth || {}).some(k => k.startsWith("higgsfield|")); } catch (e) {}
   // 토큰이 있어도 만료·무효일 수 있다 → 실제 연결 상태(claude mcp list)로 확인, 5분 캐시
-  if (hfReg && hfAuth) { const now = Date.now(); if (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000) { const out = await sh2("claude mcp list", 60000); MCPCHK.at = now; const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); } hfAuth = MCPCHK.ok; }
+  // 실제 연결 확인(claude mcp list)은 느릴 수 있다 → 화면을 막지 않게 백그라운드로 갱신, 결과가 있을 때만 그것을 쓴다
+  if (hfReg && hfAuth) {
+    const now = Date.now();
+    if (!MCPCHK.busy && (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000)) { MCPCHK.busy = true; sh2("claude mcp list", 60000).then(out => { const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); MCPCHK.at = Date.now(); }).finally(() => { MCPCHK.busy = false; }); }
+    if (MCPCHK.at) hfAuth = MCPCHK.ok;
+  }
   return { ok: true, root: ROOT, node,
     claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "", org: (claudeAuth && claudeAuth.orgName) || "", plan: (claudeAuth && claudeAuth.subscriptionType) || "", keySource: (claudeAuth && claudeAuth.apiKeySource) || "" },
     codex: { installed: !!codexV, version: codexV.replace(/^codex-cli\s*/i, ""), loggedIn: codexIn },
     higgsfield: { connected: hfReg, authed: hfAuth },
     runs: [...RUNS.values()].map(r => r.summary()), run: (() => { const r = [...RUNS.values()].find(x => x.proc && x.exit == null); return r ? r.summary() : { running: false }; })() };
 }
-const MCPCHK = { at: 0, ok: false, line: "" };
+const MCPCHK = { at: 0, ok: false, line: "", busy: false };
 /* 창 없이 실행 — 로그인 명령은 스스로 브라우저를 연다. 결과는 상태 폴링으로 확인. */
 const hidden = {};
 function spawnHidden(key, cmd, args) {
