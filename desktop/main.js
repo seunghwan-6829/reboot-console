@@ -343,10 +343,10 @@ const SUG = {
     if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
     if (this.running) return { ok: false, error: "이미 사진을 보는 중입니다" };
     const d = path.join(ROOT, name);
-    const photos = listImages(d, "").map(i => path.join(d, i.name)).slice(0, 6);
+    const photos = listImages(d, "").map(i => path.join(d, i.name)).slice(0, 5);
     if (!photos.length) return { ok: false, error: "사진이 없습니다" };
     const h = hint || {};
-    const prompt = `너는 한국 커머스 상세페이지 기획자다. 아래 사진 파일을 Read 도구로 하나씩 열어 보고(전부), 무엇이 찍혔는지 파악한 뒤 브리프 예시문을 제안하라.
+    const prompt = `너는 한국 커머스 상세페이지 기획자다. 아래 사진 파일을 Read 도구로 전부 열어 보되 한 번의 응답에서 여러 Read 를 동시에 호출해 한꺼번에 읽어라(사진마다 따로 턴을 쓰지 말 것). 무엇이 찍혔는지 파악한 뒤 브리프 예시문을 제안하라.
 사진 파일:
 ${photos.map(p => "- " + p).join("\n")}
 상품명(사용자 입력): ${h.name || "(없음)"} / 카테고리: ${h.category || "(없음)"} / 판매가: ${h.price || "(없음)"}
@@ -357,7 +357,7 @@ ${photos.map(p => "- " + p).join("\n")}
     this.name = name; this.running = true; this.error = ""; this.data = null; this.startedAt = Date.now();
     let out = "", err = "";
     let pr;
-    try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "10", "--allowedTools", "Read"], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
+    try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "40", "--allowedTools", "Read"], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
     catch (e) { this.running = false; this.error = e.message; return { ok: false, error: e.message }; }
     this.proc = pr;
     try { pr.stdin.write(prompt, "utf8"); pr.stdin.end(); } catch (e) {}
@@ -368,7 +368,8 @@ ${photos.map(p => "- " + p).join("\n")}
       this.running = false;
       try {
         const j = JSON.parse(out); const txt = String(j.result || "");
-        const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error("응답에 JSON 이 없습니다");
+        if (j.is_error) throw new Error("AI 응답 오류: " + txt.slice(0, 200));
+        const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error("응답에 JSON 이 없습니다 — " + txt.slice(0, 160));
         const data = JSON.parse(m[0]); data.at = new Date().toISOString(); data.photos = photos.map(p => path.basename(p)); data.cost = j.total_cost_usd || null;
         this.data = data; fs.writeFileSync(path.join(d, "suggest.json"), JSON.stringify(data, null, 2), "utf8");
       } catch (e) { this.error = "제안을 읽지 못했습니다: " + e.message + (err ? " / " + err.slice(0, 200) : "") + (code ? " (code " + code + ")" : ""); logErr(e); }
