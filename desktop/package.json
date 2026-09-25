@@ -1,7 +1,7 @@
 {
   "name": "reboot-console",
   "productName": "re-boot 콘솔",
-  "version": "4.7.3",
+  "version": "4.7.4",
   "description": "re:boot 상세페이지 제작 콘솔",
   "main": "main.js",
   "private": true,

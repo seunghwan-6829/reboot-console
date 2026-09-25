@@ -146,7 +146,7 @@ async function toolStatus() {
   } catch (e) {}
   try { const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude", ".credentials.json"), "utf8")); hfAuth = Object.keys(c.mcpOAuth || {}).some(k => k.startsWith("higgsfield|")); } catch (e) {}
   return { ok: true, root: ROOT, node,
-    claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "" },
+    claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "", org: (claudeAuth && claudeAuth.orgName) || "", plan: (claudeAuth && claudeAuth.subscriptionType) || "", keySource: (claudeAuth && claudeAuth.apiKeySource) || "" },
     codex: { installed: !!codexV, version: codexV.replace(/^codex-cli\s*/i, ""), loggedIn: codexIn },
     higgsfield: { connected: hfReg, authed: hfAuth },
     runs: [...RUNS.values()].map(r => r.summary()), run: (() => { const r = [...RUNS.values()].find(x => x.proc && x.exit == null); return r ? r.summary() : { running: false }; })() };
@@ -179,7 +179,7 @@ async function toolAction(q) {
       openTerminal("Codex CLI 설치", ["npm i -g @openai/codex", "echo.", "echo 설치가 끝났습니다. 이 창을 닫으면 콘솔이 다시 확인합니다."]);
       return { ok: true, message: "터미널에서 설치 중입니다", poll: true };
     case "login-claude":
-      spawnHidden("claude-login", "claude", ["auth", "login"]);
+      spawnHidden("claude-login", "claude", ["auth", "login", "--claudeai"]);   // 구독(Max/Pro) 경로로 — Console 키로 붙으면 API 과금·크레딧 오류
       return { ok: true, message: "브라우저에서 Anthropic 로그인을 마치세요", poll: true };
     case "logout-claude":
       await sh("claude auth logout", 12000); return { ok: true, message: "로그아웃했습니다", poll: true };
