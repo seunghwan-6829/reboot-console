@@ -76,6 +76,7 @@ const UI = {
   _close(v) { if (!this._ovl) return; this._ovl.classList.remove("on"); const r = this._resolve; this._resolve = null; if (r) r(v); },
   dialog(o) {
     this._ensure();
+    if (this._resolve) { const prev = this._resolve; this._resolve = null; prev(null); }
     this._dismissable = o.dismissable !== false;
     const d = $(".dlg", this._ovl);
     d.className = "dlg" + (o.wide ? " wide" : "");
@@ -193,7 +194,7 @@ const Local = {
       this.ok = !!(j && j.ok); this.desktop = !!(j && j.desktop); this.root = (j && j.root) || ""; this.version = (j && j.version) || ""; } catch (e) { this.ok = false; }
     return this.ok;
   },
-  async _j(url, opt) { const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {})); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) throw new Error(j.error || `요청 실패 (${r.status})`); return j; },
+  async _j(url, opt) { const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {})); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const err = new Error(j.error || `요청 실패 (${r.status})`); if (j.needLogin) { err.needLogin = true; setTimeout(() => Login.prompt(), 0); } throw err; } return j; },
   _post(url, body) { return this._j(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); },
   async projects(force) { if (this._projects && !force) return this._projects; return (this._projects = (await this._j("/local/projects")).projects || []); },
   project(name) { return this._j("/local/project?name=" + encodeURIComponent(name)); },
@@ -1221,6 +1222,7 @@ const Suggest = {
     const g = App.suggest;
     if (!Local.desktop) return `<p class="hint" style="margin:10px 0 12px">EXE 에서는 AI 가 사진을 직접 보고 예시문을 씁니다.</p>`;
     if (this.running) return `<div class="note i">${svg("sparkles")}<div class="nb"><b>AI 가 사진을 보는 중…</b> 20~40초. 보고 나면 아래 칸들의 예시문이 이 상품에 맞게 바뀝니다.</div></div>`;
+    if (this.err && Login.is(this.err)) return `<div class="note w">${svg("lock")}<div class="nb"><b>Claude 로그인이 만료됐습니다.</b> 다시 로그인하면 바로 분석할 수 있습니다. <button class="btn sm pri" data-sug="login" style="margin-left:6px">다시 로그인</button> <button class="btn sm" data-sug="run">다시 분석</button></div></div>`;
     if (this.err) return `<div class="note w">${svg("warn")}<div class="nb">${esc(this.err)} <button class="btn sm" data-sug="run" style="margin-left:6px">다시</button></div></div>`;
     const stale = g && FS.analysis.length && g.photos && g.photos.length !== FS.analysis.length;
     if (g && !stale) return `<div class="note o">${svg("check")}<div class="nb"><b>AI 가 본 사진:</b> ${esc(g.photo || "")}<br><span class="hint">브리프 빈 칸을 이 상품 기준으로 채웠습니다${g.cost ? ` · $${(+g.cost).toFixed(2)}` : ""}. 사실과 다르면 고쳐주세요.</span>
@@ -1231,14 +1233,14 @@ const Suggest = {
   async run() {
     if (!Local.desktop || !FS.name) return; if (this.running) return UI.toast("이미 보는 중입니다");
     const pr = App.brief.product || {};
-    try { await Local.suggest(FS.name, { name: pr.name, category: pr.category, price: pr.price }); } catch (e) { this.err = e.message; this.paint(); return UI.toast(e.message, "w"); }
+    try { await Local.suggest(FS.name, { name: pr.name, category: pr.category, price: pr.price }); } catch (e) { this.err = e.message; this.paint(); if (!e.needLogin) UI.toast(e.message, "w"); return; }
     this.running = true; this.err = ""; this.paint(); UI.toast("AI 가 사진을 보는 중…");
     clearInterval(this.timer);
     this.timer = setInterval(async () => {
       let st; try { st = await Local.suggestStatus(); } catch (e) { return; }
       if (st.running) return;
       clearInterval(this.timer); this.running = false;
-      if (st.error) { this.err = st.error; this.paint(); UI.toast("예시문 제안 실패", "w"); return; }
+      if (st.error) { this.err = st.error; this.paint(); if (st.needLogin || Login.is(st.error)) Login.prompt(); else UI.toast("예시문 제안 실패", "w"); return; }
       if (st.data && st.name === FS.name) { App.suggest = st.data; this.paint(); rerenderExamples(); refreshCardMeta(); this.fill(true); }
     }, 2500);
   },
@@ -1261,7 +1263,7 @@ const Suggest = {
       buttons: [{ label: "나중에 (6단계에서 변경)", value: 0 }], onOpen(d) { $$(".pm", d).forEach(b => b.onclick = () => UI._close(b.dataset.pm)); } });
     if (v === "regen" || v === "keep") { App.brief.req = App.brief.req || {}; App.brief.req.photoMode = v; App.saveBrief(); refreshCardMeta(); UI.toast(v === "regen" ? "AI 고화질 재현으로 설정했습니다" : "원본 그대로 합성으로 설정했습니다", "o"); }
   },
-  act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); }
+  act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); else if (k === "login") Login.prompt().then(ok => { if (ok) { this.err = ""; this.paint(); } }); }
 };
 
 /* ── AI 실행 패널: 프로젝트별 실행 · 단계 워드 스와이프 · 눈금 진행바 · 타일 스트립 · 자동/수동 이어하기 ── */
@@ -1345,7 +1347,7 @@ const RunUI = {
             else if (j.mode === "plan") UI.toast("기획안을 만들었습니다", "o");
             else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 900); }
           } else UI.toast(`${this.name} ${MODE_LABEL[j.mode] || ""} 완료 — [${j.mode === "productcut" ? "제품 컷 보기" : "검수로"}] 를 누르면 그 프로젝트로 이동합니다`, "o");
-        } else { UI.toast(j.canResume ? "AI 작업이 끝나지 않았습니다 — [이어서 하기] 로 남은 것만 진행할 수 있습니다" : "AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); }); }
+        } else { if (j.needLogin) Login.prompt(); UI.toast(j.canResume ? "AI 작업이 끝나지 않았습니다 — [이어서 하기] 로 남은 것만 진행할 수 있습니다" : "AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); }); }
       } else el2.textContent = "";
     };
     await tick(); this.timer = setInterval(tick, 1500);
@@ -1426,8 +1428,7 @@ const Settings = { title: "설정", render(v) {
     </div></div></div>` : ""}
 
     <h3 class="h3">도움말</h3>
-    <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>처음 사용 안내</b><small>프로젝트 → 제작 → 검수·내보내기 3단계 안내</small></span><button class="btn" data-act="tour">${svg("info")} 튜토리얼 다시 보기</button></div>
-      <div class="srow"><span><b>단축키</b><small>어디서나 <kbd>?</kbd> 를 누르면 표가 뜹니다</small></span><button class="btn" data-act="keys">${svg("keyboard")} 단축키 보기</button></div></div></div>
+    <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>단축키</b><small>어디서나 <kbd>?</kbd> 를 누르면 표가 뜹니다</small></span><button class="btn" data-act="keys">${svg("keyboard")} 단축키 보기</button></div></div></div>
 
     ${Local.desktop ? `<h3 class="h3">업데이트</h3>
     <div class="card open"><div class="cbody" style="border-top:0"><div class="srow" style="margin-top:14px"><span><b>버전 <span id="updV">확인 중…</span></b><small id="updS">새 버전은 알아서 받아 두었다가 AI 작업이 없을 때 조용히 적용합니다 (6시간마다 · 켤 때 확인).</small></span><button class="btn" id="updChk">${svg("refresh")} 지금 확인</button></div></div></div>` : ""}
@@ -1476,12 +1477,40 @@ async function waitJob(kind, name, onTick) {
     await sleep(1800);
     let j; try { j = await Local.job(kind, name); } catch (e) { if (Date.now() - t0 > 20 * 60000) return { error: "응답이 없습니다" }; continue; }
     if (onTick) onTick(j);
-    if (!j.running) return j;
+    if (!j.running) { if (j.error && (j.needLogin || Login.is(j.error))) { j.loginHandled = true; Login.prompt(); } return j; }
   }
 }
+const jobFail = (title, j) => j.loginHandled ? null : UI.alert(title, esc(j.error), "d");
 /* 검수 내용을 먼저 저장하고 프로젝트를 다시 읽는다 (서버 파일이 바뀐 뒤) */
 async function reloadProject() { if (!FS.name) return false; clearTimeout(Review._svT); await FS.saveReviewFile(); return FS.load(FS.name, true); }
 const grow = (b, k) => { const px = b.h * (k == null ? .35 : k); const x = clamp(b.x - px * .6, 0, 1), y = clamp(b.y - px, 0, 1); return { x: +x.toFixed(4), y: +y.toFixed(4), w: +clamp(b.w + px * 1.2, .01, 1 - x).toFixed(4), h: +clamp(b.h + px * 2, .01, 1 - y).toFixed(4) }; };
+
+/* ═══ Claude 로그인 만료 → 안내창 → 브라우저 로그인 → 자동 확인 (+ Higgsfield 인증까지) ═══ */
+const Login = {
+  busy: false,
+  is(msg) { return /로그인이 만료|로그인이 풀렸|로그인이 필요|failed to authenticate|session expired|could not be refreshed/i.test(String(msg || "")); },
+  async prompt() {
+    if (this.busy || !Local.desktop) return false; this.busy = true;
+    try {
+      const v = await UI.dialog({ title: "Claude 로그인이 만료됐습니다", sub: "사진 분석·제작·오타 검사 같은 AI 기능은 Claude 로그인이 있어야 돌아갑니다. [다시 로그인] 을 누르면 브라우저가 열리고, 로그인만 끝내면 콘솔이 알아서 확인합니다.", icon: "lock", tone: "w",
+        buttons: [{ label: "나중에", value: 0 }, { label: "다시 로그인", value: 1, kind: "pri" }] });
+      if (v !== 1) return false;
+      try { await Local.toolAct("login-claude"); } catch (e) { UI.alert("로그인을 시작하지 못했습니다", esc(e.message), "d"); return false; }
+      UI.toast("브라우저에서 로그인을 마치세요 — 끝나면 자동으로 확인합니다");
+      for (let i = 0; i < 80; i++) {
+        await sleep(3000); let t; try { t = await Local.tools(); } catch (e) { continue; }
+        if (!(t.claude && t.claude.loggedIn)) continue;
+        UI.toast(`Claude 로그인 완료${t.claude.email ? " — " + t.claude.email : ""}`, "o"); Usage.load(true);
+        if (!(t.higgsfield.connected && t.higgsfield.authed)) {
+          const h = await UI.confirm("Higgsfield 인증도 해주세요", "이미지 생성(제작·수정·제품 컷)에 필요합니다. 버튼을 누르면 브라우저에서 인증만 하면 됩니다.", { ok: "Higgsfield 인증", tone: "w", cancel: "나중에" });
+          if (h) { try { await Local.toolAct(t.higgsfield.connected ? "auth-mcp" : "add-mcp"); UI.toast("브라우저에서 Higgsfield 인증을 마치세요"); } catch (e) { UI.toast(e.message, "w"); } }
+        }
+        return true;
+      }
+      UI.toast("로그인 확인이 안 됩니다 — 설정 → 연결에서 다시 확인하세요", "w"); return false;
+    } finally { this.busy = false; }
+  }
+};
 
 /* ═══ 가독성 (#25): Windows OCR 줄 박스 → 모바일(390px) 글자 크기 · 배경 대비 ═══ */
 const Read = {
@@ -1529,7 +1558,7 @@ const Typo = {
     const name = FS.name; this.running = true; this.paintBtn(); UI.toast(`AI 가 타일 ${App.tiles.length}장을 한 글자씩 읽는 중… 다른 작업을 하셔도 됩니다`);
     const j = await waitJob("typo", name);
     this.running = false;
-    if (j.error) { this.paintBtn(); return UI.alert("오타 검사 실패", esc(j.error), "d"); }
+    if (j.error) { this.paintBtn(); return jobFail("오타 검사 실패", j); }
     if (FS.name === name) await reloadProject();
     const n = (j.data && j.data.count) || 0;
     UI.toast(n ? `${name}: 오타 의심 ${n}건 — 검수 화면에 주황 점선으로 표시했습니다` : `${name}: 오타 검사 완료 — 이상 없음`, n ? "w" : "o");
@@ -1720,7 +1749,7 @@ const Ref = {
     const name = FS.name; this.running = true; this.paint();
     const j = await waitJob("ref", name);
     this.running = false;
-    if (j.error) { this.paint(); return UI.alert("경쟁사 분석 실패", esc(j.error), "d"); }
+    if (j.error) { this.paint(); return jobFail("경쟁사 분석 실패", j); }
     if (FS.name === name) { await reloadProject(); this.paint(); }
     UI.toast("경쟁사 분석 완료 — 페이지 구성 카드 아래를 확인하세요", "o");
   }
@@ -1740,7 +1769,7 @@ const Feedback = {
     try { await Local.feedback(FS.name, text); } catch (e) { return UI.alert("정리하지 못했습니다", esc(e.message), "d"); }
     const name = FS.name; this.running = true; UI.toast("AI 가 피드백을 장별로 나누는 중… (30초~1분)");
     const j = await waitJob("feedback", name); this.running = false;
-    if (j.error) return UI.alert("피드백 정리 실패", esc(j.error), "d");
+    if (j.error) return jobFail("피드백 정리 실패", j);
     if (FS.name !== name) { UI.toast(`${name} 피드백 정리 완료 — 그 프로젝트를 열면 확인할 수 있습니다`, "o"); return; }
     await reloadProject(); this.show(j.data);
   },
@@ -1868,7 +1897,7 @@ const Export = {
     try { await Local.psd(FS.name); } catch (e) { return UI.alert("PSD 를 시작하지 못했습니다", esc(e.message), "d"); }
     const name = FS.name; UI.toast("PSD 만드는 중… 장당 1~2초");
     const j = await waitJob("psd", name, s => { if (s.total) UI.toast(`PSD ${s.done}/${s.total}`); });
-    if (j.error) return UI.alert("PSD 실패", esc(j.error), "d");
+    if (j.error) return jobFail("PSD 실패", j);
     const r = await UI.dialog({ title: "PSD 를 만들었습니다", sub: `${(j.data || {}).count || 0}장`, icon: "check", tone: "o", body: `<p class="hint" style="margin:0"><code>export\\psd</code> 에 있습니다. 포토샵에서 열 때 '텍스트 레이어 업데이트' 를 누르세요.</p>`, buttons: [{ label: "닫기", value: 0 }, { label: "폴더 열기", value: 1, kind: "pri" }] });
     if (r === 1) { try { await Local.toolAct("open-folder", { name, sub: "export/psd" }); } catch (e) {} }
   }
@@ -1895,27 +1924,13 @@ const Versions = {
 };
 
 /* ═══ 튜토리얼 + 단축키 (#30) ═══ */
-const TOUR = [
-  { t: "1. 프로젝트 만들고 사진 넣기", b: `왼쪽 <b>새 프로젝트</b> → 상품 이름만 적으면 폴더가 생깁니다. 사진은 끌어다 놓거나 <kbd>Ctrl</kbd>+<kbd>V</kbd>. 다 올린 뒤 <b>분석 후 적용</b>을 누르면 AI 가 사진을 보고 브리프 빈 칸을 채웁니다.`, i: "photo" },
-  { t: "2. 제품 컷 확인 → AI 로 만들기", b: `저화질 사진이면 <b>제품 컷 만들기</b>로 AI 재현 컷을 원본과 나란히 보고 승인하세요. 브리프 마지막에서 <b>AI로 상세페이지 만들기</b> — 바로 제작하거나 <b>대기열·오늘 밤 예약</b>으로 걸어둘 수 있습니다. 끊기면 자동으로 이어서 합니다.`, i: "sparkles" },
-  { t: "3. 검수 → 수정 → 내보내기", b: `검수에서 <kbd>D</kbd> 영역 잡기, <kbd>T</kbd> 글자 수정(원래 글자 자동 인식), <b>오타 검사</b>·<b>가독성</b>으로 기계가 먼저 거릅니다. 고객 피드백은 <b>피드백 붙여넣기</b>. 끝나면 <b>내보내기</b>로 프리뷰 HTML·채널별 JPG·PSD.`, i: "check" }
-];
-async function runTour() {
-  for (let i = 0; i < TOUR.length;) {
-    const s = TOUR[i];
-    const v = await UI.dialog({ title: s.t, sub: `re:boot 콘솔 사용법 ${i + 1}/${TOUR.length}`, icon: s.i, tone: "b", body: `<p style="margin:0">${s.b}</p><div class="tdots">${TOUR.map((x, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div><p class="hint" style="margin:10px 0 0"><kbd>?</kbd> 를 누르면 언제든 단축키 표가 뜹니다.</p>`,
-      buttons: [{ label: "건너뛰기", value: "skip" }].concat(i ? [{ label: "← 이전", value: "prev" }] : []).concat([{ label: i === TOUR.length - 1 ? "시작하기" : "다음 →", value: "next", kind: "pri" }]) });
-    if (v === "prev") i--; else if (v === "next") i++; else break;
-  }
-  Store.set("tourDone", true);
-}
 const KEYS = [["어디서나", [["?", "단축키 표"], ["Alt + 1~5", "홈 · 프로젝트 · 브리프 · 타일 · 검수"], ["Ctrl + V", "사진 붙여넣기 (글 입력 중이 아닐 때)"], ["F5", "새로 고침"], ["Esc", "창·확대 닫기"]]],
   ["타일", [["Ctrl + 휠 / + / −", "배율"], ["Ctrl + 0", "100%"], ["M", "모바일 프레임 켜기/끄기"], ["더블클릭", "그 장 검수로"]]],
   ["검수", [["← →  Enter", "이전 · 다음 장"], ["D", "영역 잡기"], ["T", "글자 수정 (원래 글자 자동 인식)"], ["Del", "선택한 영역 삭제"], ["휠 · 드래그 · 더블클릭", "확대 · 이동 · 맞춤↔100%"]]]];
 function showKeys() {
   if ($(".ovl.on")) return;
   UI.dialog({ title: "단축키", icon: "keyboard", tone: "b", wide: true, body: `<div class="keys">${KEYS.map(([g, ks]) => `<div><h5>${g}</h5>${ks.map(([k, d]) => `<div class="krow"><span>${k.split(" ").map(x => /^[+/~·]$/.test(x) || x === "" ? esc(x) : `<kbd>${esc(x)}</kbd>`).join(" ")}</span><em>${esc(d)}</em></div>`).join("")}</div>`).join("")}</div>`,
-    buttons: [{ label: "튜토리얼 다시 보기", value: 1 }, { label: "닫기", value: 0, kind: "pri" }] }).then(v => { if (v === 1) runTour(); });
+    buttons: [{ label: "닫기", value: 0, kind: "pri" }] });
 }
 document.addEventListener("keydown", e => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) || $(".ovl.on") || $(".lbx.on")) return;
@@ -1931,7 +1946,7 @@ async function aiReady() {
   let t; try { t = await Local.tools(); } catch (e) { return { ok: false, why: e.message }; }
   const mine = (t.runs || []).find(r => r.name === FS.name && r.running); if (mine) return { ok: false, why: "이 프로젝트는 이미 AI 작업 중입니다", running: true };
   if (!t.claude.installed) return { ok: false, why: "Claude Code 가 설치되지 않았습니다", fix: true };
-  if (!t.claude.loggedIn) return { ok: false, why: "Claude Code 로그인이 필요합니다", fix: true };
+  if (!t.claude.loggedIn) return { ok: false, why: "Claude 로그인이 만료됐습니다", fix: true, login: true };
   if (!t.higgsfield.connected || !t.higgsfield.authed) return { ok: false, why: "Higgsfield MCP 인증이 필요합니다", fix: true };
   return { ok: true };
 }
@@ -1980,7 +1995,7 @@ const ACT = {
     if (Local.desktop && !Usage.data) await Promise.race([Usage.load(), sleep(2500)]);
     const cutHint = Local.desktop && photoModeOf() === "regen" && !FS.approved;
     const btns = [{ label: "닫기", value: 0 }];
-    if (Local.desktop) { if (rd.ok) { btns.push({ label: "대기열·예약", value: 6 }); btns.push({ label: "여기서 바로 제작", value: 3, kind: "pri" }); } else btns.push(rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" }); }
+    if (Local.desktop) { if (rd.ok) { btns.push({ label: "대기열·예약", value: 6 }); btns.push({ label: "여기서 바로 제작", value: 3, kind: "pri" }); } else btns.push(rd.login ? { label: "다시 로그인", value: 8, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" }); }
     else btns.push({ label: "명령 복사", value: 1, kind: "pri" });
     const v = await UI.dialog({ title: "제작 준비가 됐습니다", sub: `브리프와 사진 분석을 정리했습니다.`, icon: "sparkles", tone: rd.ok ? "o" : "b",
       body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행은 오른쪽 아래 패널에 뜨고, 끊기면 자동으로 이어서 합니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + ". <b>대기열·예약</b>으로 밤에 돌려도 됩니다." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}
@@ -1991,6 +2006,7 @@ const ACT = {
     if (v === 3) return ACT.runAI("make");
     if (v === 6) return enqueue({ mode: "make" }, `제작 — ${FS.name}`);
     if (v === 7) return ACT.productCut();
+    if (v === 8) return Login.prompt();
     if (v === 4) return go("settings");
     if (v === 5) return ACT.runClaudeTerm();
     const txt = v === 1 ? cmd : null; if (!txt) return;
@@ -1998,7 +2014,7 @@ const ACT = {
   },
   async runAI(mode, extra) {
     try { await Local.run(FS.name, mode, "", photoModeOf(), extra); RunUI.show(runTitle(mode, FS.name, extra), FS.name, mode); UI.toast("AI 작업을 시작했습니다", "o"); Usage.load(); }
-    catch (e) { UI.alert("시작 실패", esc(e.message), "d"); }
+    catch (e) { if (!e.needLogin) UI.alert("시작 실패", esc(e.message), "d"); }
   },
   /* 검수 영역·코멘트 → review.json + review/NN_marked.png → (EXE) AI 수정 */
   async revise() {
@@ -2017,6 +2033,7 @@ const ACT = {
     if (Local.desktop) {
       const rd = await aiReady();
       if (rd.ok) return ACT.runAI("revise");
+      if (rd.login) return Login.prompt();
       const v = await UI.dialog({ title: "바로 실행할 수 없습니다", sub: esc(rd.why), icon: "warn", tone: "w", body: `<pre class="cmd">${esc(cmd)}</pre>`, buttons: [{ label: "닫기", value: 0 }, { label: "명령 복사", value: 1 }].concat(rd.fix ? [{ label: "연결 설정으로", value: 2, kind: "pri" }] : []) });
       if (v === 2) return go("settings"); if (v !== 1) return;
     }
@@ -2049,7 +2066,6 @@ Object.assign(ACT, {
   exportMenu() { return Export.open(); },
   feedback() { return Feedback.open(); },
   usage() { return Usage.open(); },
-  tour() { return runTour(); },
   keys() { showKeys(); },
   async timeline(name) {
     name = typeof name === "string" ? name : "";
@@ -2079,7 +2095,7 @@ Object.assign(ACT, {
     if (ins && !note) return UI.toast("추가할 장의 내용을 적어주세요", "w");
     const extra = { tile: n, op: ins ? "insert" : "regen", note };
     if (v === 2) return enqueue(Object.assign({ mode: "tile" }, extra), `${n} ${ins ? "뒤에 추가" : "다시"} — ${FS.name}`);
-    const rd = await aiReady(); if (!rd.ok) return rd.fix ? (await UI.confirm("바로 실행할 수 없습니다", esc(rd.why), { ok: "연결 설정으로" })) && go("settings") : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
+    const rd = await aiReady(); if (!rd.ok) return rd.login ? Login.prompt() : rd.fix ? (await UI.confirm("바로 실행할 수 없습니다", esc(rd.why), { ok: "연결 설정으로" })) && go("settings") : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
     return ACT.runAI("tile", extra);
   },
   /* 제품 컷 먼저 (#1) */
@@ -2091,7 +2107,7 @@ Object.assign(ACT, {
       buttons: [{ label: "취소", value: 0 }, { label: "만들기", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#pcNote", d).focus(), 60); } });
     const note = ($("#pcNote") && $("#pcNote").value.trim()) || ""; if (v !== 1) return;
     await ACT.saveBrief(true); await writeOrder();
-    const rd = await aiReady(); if (!rd.ok) return UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
+    const rd = await aiReady(); if (!rd.ok) return rd.login ? Login.prompt() : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
     return ACT.runAI("productcut", { note });
   }
 });
@@ -2142,6 +2158,6 @@ async function boot() {
   else if (!Local.ok) UI.toast("EXE 로 실행해 주세요 — 지금은 화면만 보입니다", "w");
   if (Local.desktop) { Usage.start(); QueueUI.load().then(() => renderSide()); try { const all = (await Local.runsAll()).runs || []; const st = all.find(r => r.running && r.name === FS.name) || all.find(r => r.running); if (st) RunUI.show(runTitle(st.mode, st.name, st), st.name, st.mode); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
 }
-document.addEventListener("DOMContentLoaded", () => { boot().then(() => { if (!Store.get("tourDone", false)) setTimeout(runTour, 900); }); });
-window.rebootApp = { App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest, Read, Typo, Usage, QueueUI, Cut, Ref, Feedback, Export, Versions, Projects, Home };
+document.addEventListener("DOMContentLoaded", boot);
+window.rebootApp = { Login, App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest, Read, Typo, Usage, QueueUI, Cut, Ref, Feedback, Export, Versions, Projects, Home };
 })();

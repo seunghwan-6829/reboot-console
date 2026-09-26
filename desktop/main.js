@@ -257,6 +257,29 @@ function buildExport(name, ver) {
   return { path: p, count: figs.length, size: fs.statSync(p).size };
 }
 
+/* ── Claude 로그인 상태(캐시) · claude 실행 간격 게이트 ──────
+   claude 를 짧은 간격으로 여러 개 띄우면 만료된 토큰을 동시에 갱신하다 서로 부딪혀
+   "OAuth session expired and could not be refreshed" 로 로그인이 통째로 풀릴 수 있다.
+   → 모든 claude 실행을 한 줄로 세워 3.5초 간격을 두고, AI 작업 전에는 로그인 상태를 먼저 확인한다. */
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+const LOGIN_RE = /failed to authenticate|oauth (session|token)|session expired|could not be refreshed|not logged in|authentication_error|invalid api key|please run \/login|\b401\b|로그인이 만료/i;
+let GATE = Promise.resolve(), GATE_LAST = 0;
+function claudeGate() { const p = GATE.then(async () => { const w = GATE_LAST + 3500 - Date.now(); if (w > 0) await sleepMs(w); GATE_LAST = Date.now(); }); GATE = p.catch(() => {}); return p; }
+const AUTH = { at: 0, v: null, p: null };
+function authState(maxAge) {
+  maxAge = maxAge == null ? 20000 : maxAge;
+  if (AUTH.v && Date.now() - AUTH.at < maxAge) return Promise.resolve(AUTH.v);
+  if (AUTH.p) return AUTH.p;
+  AUTH.p = claudeGate().then(() => sh2("claude auth status --json", 15000)).then(t => {
+    let j = null; try { const a = t.indexOf("{"), b = t.lastIndexOf("}"); if (a >= 0 && b > a) j = JSON.parse(t.slice(a, b + 1)); } catch (e) {}   // 로그아웃이면 종료 코드가 1 이어도 JSON 은 나온다
+    AUTH.v = j ? { loggedIn: !!j.loggedIn, email: j.email || "", org: j.orgName || "", plan: j.subscriptionType || "", keySource: j.apiKeySource || "" } : { loggedIn: false, unknown: true };
+    AUTH.at = Date.now(); return AUTH.v;
+  }).finally(() => { AUTH.p = null; });
+  return AUTH.p;
+}
+const NEED_LOGIN = { ok: false, needLogin: true, error: "Claude 로그인이 만료됐습니다 — [다시 로그인] 을 누르고 브라우저에서 로그인만 하면 됩니다" };
+async function loginOk() { const a = await authState(); return !(a.loggedIn === false && !a.unknown); }
+
 /* ── 도구 연결 (Claude Code · Codex · Higgsfield MCP) ───── */
 const sh = (cmd, ms) => new Promise(res => exec(cmd, { timeout: ms || 8000, windowsHide: true, encoding: "utf8" }, (err, out) => res(err ? "" : String(out || "").trim())));
 const sh2 = (cmd, ms) => new Promise(res => exec(cmd, { timeout: ms || 8000, windowsHide: true, encoding: "utf8" }, (err, out, se) => res(String(out || "") + String(se || ""))));  // stdout+stderr, 실패해도 텍스트
@@ -264,7 +287,7 @@ async function toolStatus() {
   const node = await sh("node -v");
   const claudeV = await sh("claude --version"), codexV = await sh("codex --version");
   let claudeAuth = null;
-  if (claudeV) { try { claudeAuth = JSON.parse(await sh("claude auth status --json", 12000)); } catch (e) { claudeAuth = null; } }
+  if (claudeV) { const a = await authState(AUTH.v && AUTH.v.loggedIn ? 20000 : 4000); claudeAuth = a.unknown ? null : { loggedIn: a.loggedIn, email: a.email, orgName: a.org, subscriptionType: a.plan, apiKeySource: a.keySource }; }
   let codexIn = false;
   if (codexV) { const st = await sh2("codex login status", 12000); codexIn = /logged in/i.test(st) && !/not logged in/i.test(st); }
   let hfReg = false, hfAuth = false;
@@ -277,7 +300,7 @@ async function toolStatus() {
   // 실제 연결 확인(claude mcp list)은 느릴 수 있다 → 화면을 막지 않게 백그라운드로 갱신, 결과가 있을 때만 그것을 쓴다
   if (hfReg && hfAuth) {
     const now = Date.now();
-    if (!MCPCHK.busy && (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000)) { MCPCHK.busy = true; sh2("claude mcp list", 60000).then(out => { const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); MCPCHK.at = Date.now(); }).finally(() => { MCPCHK.busy = false; }); }
+    if (!MCPCHK.busy && (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000)) { MCPCHK.busy = true; claudeGate().then(() => sh2("claude mcp list", 60000)).then(out => { const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); MCPCHK.at = Date.now(); }).finally(() => { MCPCHK.busy = false; }); }
     if (MCPCHK.at) hfAuth = MCPCHK.ok;
   }
   return { ok: true, root: ROOT, node,
@@ -315,10 +338,11 @@ async function toolAction(q) {
       openTerminal("Codex CLI 설치", ["npm i -g @openai/codex", "echo.", "echo 설치가 끝났습니다. 이 창을 닫으면 콘솔이 다시 확인합니다."]);
       return { ok: true, message: "터미널에서 설치 중입니다", poll: true };
     case "login-claude":
+      AUTH.at = 0; MCPCHK.at = 0;
       spawnHidden("claude-login", "claude", ["auth", "login", "--claudeai"]);   // 구독(Max/Pro) 경로로 — Console 키로 붙으면 API 과금·크레딧 오류
       return { ok: true, message: "브라우저에서 Anthropic 로그인을 마치세요", poll: true };
     case "logout-claude":
-      await sh("claude auth logout", 12000); MCPCHK.at = 0; return { ok: true, message: "로그아웃했습니다 — 다시 로그인하면 Higgsfield 인증도 다시 필요할 수 있습니다", poll: true };
+      await sh("claude auth logout", 12000); MCPCHK.at = 0; AUTH.at = 0; return { ok: true, message: "로그아웃했습니다 — 다시 로그인하면 Higgsfield 인증도 다시 필요할 수 있습니다", poll: true };
     case "login-codex":
       spawnHidden("codex-login", "codex", ["login"]);
       return { ok: true, message: "브라우저에서 ChatGPT 로그인을 마치세요", poll: true };
@@ -419,8 +443,8 @@ const RESUME_TAIL = `\n[이어서 하기] 이전 실행이 중간에 끊겼다. 
 function friendlyErr(t) {
   t = String(t || "");
   if (/credit balance is too low/i.test(t)) return "Max 플랜 사용량 한도에 도달했고 '추가 사용량' 잔액이 0입니다 — claude.ai 설정 → 사용량에서 리셋 시각을 확인하거나 추가 사용량을 충전하세요. (" + t.slice(0, 80) + ")";
+  if (LOGIN_RE.test(t)) { AUTH.at = 0; return "Claude 로그인이 만료됐습니다 — [다시 로그인] 을 누르고 브라우저에서 로그인만 하면 됩니다. (" + t.slice(0, 90) + ")"; }
   if (/rate limit|429|usage limit|limit reached/i.test(t)) return "사용량 한도에 도달했습니다 — 리셋 시각 이후 다시 시도하세요. (" + t.slice(0, 120) + ")";
-  if (/not logged in|authentication|401|invalid api key/i.test(t)) return "Claude Code 로그인이 풀렸습니다 — 설정 → 연결에서 다시 로그인하세요. (" + t.slice(0, 120) + ")";
   if (/max turns|max_turns/i.test(t)) return "작업이 턴 한도에 걸려 중단됐습니다 — 다시 실행하면 이어서 진행합니다. (" + t.slice(0, 120) + ")";
   return "AI 응답 오류: " + t.slice(0, 300);
 }
@@ -430,8 +454,9 @@ const runningCount = () => [...RUNS.values()].filter(r => r.proc && r.exit == nu
 const runFor = name => RUNS.get(name) || null;
 function makeRun() { return Object.assign(Object.create(RUN_PROTO), { proc: null, name: "", mode: "", lines: [], startedAt: 0, done: false, exit: null, stage: "", stageIdx: -1, tileDone: 0, tileTotal: 0, tileName: "", last: "",
   sid: "", hf: 0, gen: 0, cost: 0, turns: 0, userStopped: false, abortReason: "", resumes: 0, pendingResume: false, resumeTimer: null, resultError: false, lastErr: "", segStart: 0, opts: {}, qid: null, resumed: false }); }
-function startRun(name, mode, b, qid) {
+async function startRun(name, mode, b, qid) {
   if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
+  if (!(await loginOk())) return NEED_LOGIN;
   const cur = runFor(name); if (cur && cur.proc && cur.exit == null) return { ok: false, error: "이 프로젝트는 이미 AI 작업 중입니다" };
   if (runningCount() >= 3) return { ok: false, error: "동시에 3개까지만 돌릴 수 있습니다" };
   const r = makeRun(); r.qid = qid || null;
@@ -454,7 +479,7 @@ const RUN_PROTO = {
   summary() { return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt, runId: this.startedAt,
     stages: this.stages(), stage: this.stage, stageIdx: this.stageIdx, tileDone: this.tileDone, tileTotal: this.tileTotal, tileName: this.tileName, pct: this.pct(), last: this.last,
     resumes: this.resumes, pendingResume: this.pendingResume, stopped: this.userStopped, abort: this.abortReason, hf: this.hf, gen: this.gen, cost: this.cost, resumed: this.resumed,
-    tile: this.opts.tile || "", op: this.opts.op || "", newId: this.opts.newId || "", canResume: !!(this.done && this.exit !== 0 && !this.abortReason), qid: this.qid }; },
+    tile: this.opts.tile || "", op: this.opts.op || "", newId: this.opts.newId || "", canResume: !!(this.done && this.exit !== 0 && !this.abortReason), qid: this.qid, needLogin: !!(this.done && this.exit !== 0 && LOGIN_RE.test(this.lastErr)) }; },
   setStage(name) { const st = this.stages(); const i = st.indexOf(name); if (i >= 0 && i >= this.stageIdx) { this.stageIdx = i; this.stage = name; } },
   /* 텍스트 마커(▶ 단계 / ▶ 타일) 우선, 없으면 도구 호출로 추정 */
   track(kind, text) {
@@ -516,9 +541,16 @@ const RUN_PROTO = {
     // 사용자 기본 모델이 opus[1m](1M 컨텍스트)이면 Max 한도를 훨씬 빨리 소진한다 → 일반 opus 로 고정
     const args = ["-p", ...(extra || []), "--model", "claude-opus-5", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Bash", "mcp__higgsfield", "WebFetch"];
+    if (!this.proc) this.proc = { pending: true };
+    claudeGate().then(() => this.spawnSeg(prompt, args));
+    return { ok: true, message: "시작했습니다" };
+  },
+  spawnSeg(prompt, args) {
+    if (this.exit != null) return;
+    if (this.userStopped) return this.finish(-2);
     let p;
     try { p = spawn("claude", args, { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
-    catch (e) { if (!this.proc) return { ok: false, error: "실행 실패: " + e.message }; this.push("err", "실행 실패: " + e.message); this.finish(-1); return { ok: false, error: e.message }; }
+    catch (e) { this.push("err", "실행 실패: " + e.message); return this.finish(-1); }
     this.proc = p; this.segStart = Date.now(); this.resultError = false;
     try { p.stdin.write(prompt, "utf8"); p.stdin.end(); } catch (e) { this.push("err", "프롬프트 전달 실패: " + e.message); }
     let buf = "", ended = false;
@@ -527,7 +559,6 @@ const RUN_PROTO = {
     p.stderr.on("data", d => { const s = d.toString("utf8").trim(); if (s) this.push("err", s); });
     p.on("error", e => { this.push("err", "실행 오류: " + e.message); end(-1); });
     p.on("close", code => end(code == null ? -1 : code));
-    return { ok: true, message: "시작했습니다" };
   },
   /* 한 번의 claude 실행이 끝났을 때: 실패면 조건이 맞을 때 같은 세션으로 자동 이어하기 */
   segEnd(code) {
@@ -542,8 +573,7 @@ const RUN_PROTO = {
         if (this.userStopped) return this.finish(-2);
         this.push("sys", "이어서 진행 — 세션 " + this.sid.slice(0, 8));
         actLog(this.name, "run", `${MODE_LABEL[this.mode]} 자동 이어하기 (${this.resumes}회)`);
-        const r = this.launch(RESUME_PROMPT(this.mode), ["--resume", this.sid]);
-        if (!r.ok) this.finish(-1);
+        this.launch(RESUME_PROMPT(this.mode), ["--resume", this.sid]);
       }, 8000);
       return;
     }
@@ -552,7 +582,7 @@ const RUN_PROTO = {
   canAutoResume() {
     if (this.abortReason || !this.sid || this.resumes >= 2) return false;
     if (readCfg().autoResume === false) return false;
-    if (/로그인|사용량 한도|credit|limit|401|authentication|Higgsfield MCP 가 연결/i.test(this.lastErr)) return false;
+    if (LOGIN_RE.test(this.lastErr) || /로그인|사용량 한도|credit|limit|Higgsfield MCP 가 연결/i.test(this.lastErr)) return false;
     return Date.now() - this.segStart > 45000;                           // 시작하자마자 죽는 오류는 되풀이하지 않는다
   },
   finish(code) {
@@ -601,7 +631,7 @@ const RUN_PROTO = {
     if (this.exit != null) return { ok: false, error: "실행 중이 아닙니다" };
     this.userStopped = true;
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; this.push("sys", "사용자가 중단"); this.finish(-2); return { ok: true, message: "중단했습니다" }; }
-    if (this.proc) { try { if (IS_WIN) exec(`taskkill /PID ${this.proc.pid} /T /F`, { windowsHide: true }); else this.proc.kill("SIGTERM"); } catch (e) {} }
+    if (this.proc && this.proc.pid) { try { if (IS_WIN) exec(`taskkill /PID ${this.proc.pid} /T /F`, { windowsHide: true }); else this.proc.kill("SIGTERM"); } catch (e) {} }
     this.push("sys", this.abortReason === "hf" ? "Higgsfield 미연결로 중단" : "사용자가 중단"); return { ok: true, message: "중단했습니다" };
   }
 };
@@ -644,13 +674,19 @@ const Q = {
     if (what === "up" || what === "down") { const j = what === "up" ? i - 1 : i + 1; if (j < 0 || j >= this.items.length) return { ok: true }; [this.items[i], this.items[j]] = [this.items[j], this.items[i]]; this.save(); return { ok: true }; }
     return { ok: false, error: "모르는 동작" };
   },
-  tick() {
+  async tick() {
+    if (this.ticking) return; this.ticking = true;
+    try { await this.tick1(); } catch (e) { logErr(e); } finally { this.ticking = false; }
+  },
+  async tick1() {
     const now = Date.now(); let changed = false;
     for (const it of this.items) {
       if (it.status !== "waiting" || (it.startAt && it.startAt > now)) continue;
       if (runningCount() >= this.conc()) break;
       const cur = runFor(it.name); if (cur && cur.proc && cur.exit == null) continue;
-      const out = startRun(it.name, it.mode, { photoMode: it.photoMode, tile: it.tile, op: it.op, note: it.note }, it.id);
+      const out = await startRun(it.name, it.mode, { photoMode: it.photoMode, tile: it.tile, op: it.op, note: it.note }, it.id);
+      if (out.needLogin) { if (it.info !== "Claude 로그인 필요 — 로그인하면 이어서 시작") { it.info = "Claude 로그인 필요 — 로그인하면 이어서 시작"; changed = true; } break; }
+      it.info = "";
       if (out.ok) { it.status = "running"; it.startedAt = now; } else { it.status = "failed"; it.error = out.error; it.endedAt = now; }
       changed = true;
     }
@@ -709,10 +745,11 @@ const UPD = {
 /* ── 사진 보고 브리프 예시문 제안 (Claude Code 헤드리스, Read 만 허용) ── */
 const SUG = {
   proc: null, name: "", running: false, error: "", data: null, startedAt: 0,
-  get() { return { ok: true, running: this.running, name: this.name, error: this.error, data: this.data, startedAt: this.startedAt }; },
-  start(name, hint) {
+  get() { return { ok: true, running: this.running, name: this.name, error: this.error, needLogin: !!this.needLogin, data: this.data, startedAt: this.startedAt }; },
+  async start(name, hint) {
     if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
     if (this.running) return { ok: false, error: "이미 사진을 보는 중입니다" };
+    if (!(await loginOk())) return NEED_LOGIN;
     const d = path.join(ROOT, name);
     const photos = listImages(d, "").map(i => path.join(d, i.name)).slice(0, 5);
     if (!photos.length) return { ok: false, error: "사진이 없습니다" };
@@ -725,7 +762,8 @@ ${photos.map(p => "- " + p).join("\n")}
 반드시 아래 형식의 JSON 객체 하나만 출력한다. 설명·마크다운·코드펜스 금지.
 {"photo":"사진에 보이는 것 1~2문장 — 제품 형태·포장·라벨에 적힌 글자·색·배경","name":"상품명 제안 (사용자 입력이 있으면 그대로)","who":"누가 어떤 상황에서 사는지 2문장, 구체적인 사람으로","specs":"스펙·구성·성분 3~5줄을 줄바꿈으로. 사진·라벨에서 읽은 것만 사실로 쓰고 추정은 끝에 (확인 필요)","usp":"경쟁 제품 대비 차별점 한 줄. 추정이면 끝에 (추정)","mood":"어울리는 비주얼 분위기 한 줄","avoid":"피해야 할 톤 한 줄","sections":["추가하면 좋은 섹션 id 0~3개: brand,howto,awards,reviews 중"]}
 규칙: 라벨·사진에 없는 수치·인증·후기·원산지·수상은 절대 지어내지 않는다. 한국어. 각 값은 짧고 바로 쓸 수 있게.`;
-    this.name = name; this.running = true; this.error = ""; this.data = null; this.startedAt = Date.now();
+    this.name = name; this.running = true; this.error = ""; this.needLogin = false; this.data = null; this.startedAt = Date.now();
+    await claudeGate();
     let out = "", err = "";
     let pr;
     try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "40", "--allowedTools", "Read"], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
@@ -738,13 +776,14 @@ ${photos.map(p => "- " + p).join("\n")}
     pr.on("close", code => {
       this.running = false;
       try {
-        const j = JSON.parse(out); const txt = String(j.result || "");
+        const line = out.trim().split(/\r?\n/).filter(l => l.trim().startsWith("{")).pop() || out.trim();
+        const j = JSON.parse(line); const txt = String(j.result || "");
         if (j.is_error) throw new Error(friendlyErr(txt));
         const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error("응답에 JSON 이 없습니다 — " + txt.slice(0, 160));
         const data = JSON.parse(m[0]); data.at = new Date().toISOString(); data.photos = photos.map(p => path.basename(p)); data.cost = j.total_cost_usd || null;
         this.data = data; fs.writeFileSync(path.join(d, "suggest.json"), JSON.stringify(data, null, 2), "utf8");
         actLog(name, "ai", "사진 분석 → 브리프 예시문 제안");
-      } catch (e) { this.error = "제안을 읽지 못했습니다: " + e.message + (err ? " / " + err.slice(0, 200) : "") + (code ? " (code " + code + ")" : ""); logErr(e); }
+      } catch (e) { const raw = e.message + " " + err + " " + out.slice(0, 400); this.needLogin = LOGIN_RE.test(raw); this.error = this.needLogin ? friendlyErr(raw) : "제안을 읽지 못했습니다: " + e.message + (err ? " / " + err.slice(0, 200) : "") + (code ? " (code " + code + ")" : ""); logErr(e); }
     });
     return { ok: true, message: "AI 가 사진을 보는 중" };
   }
@@ -753,10 +792,11 @@ ${photos.map(p => "- " + p).join("\n")}
 /* ── 가벼운 AI 작업 (오타 검수 · 피드백 구조화 · 경쟁사 분석) — sonnet, JSON 하나로 답 ── */
 const JOBS = new Map();
 const JOBS_RUNNING = () => [...JOBS.values()].some(j => j.running);
-function jobGet(kind, name) { const j = JOBS.get(kind + "|" + name); return j ? { ok: true, kind, name, running: j.running, stage: j.stage, error: j.error, data: j.data, startedAt: j.startedAt, cost: j.cost, done: j.done, total: j.total } : { ok: true, kind, name, running: false }; }
+function jobGet(kind, name) { const j = JOBS.get(kind + "|" + name); return j ? { ok: true, kind, name, running: j.running, stage: j.stage, error: j.error, needLogin: !!(j.error && LOGIN_RE.test(j.error)), data: j.data, startedAt: j.startedAt, cost: j.cost, done: j.done, total: j.total } : { ok: true, kind, name, running: false }; }
 function jobNew(kind, name) { const k = kind + "|" + name, cur = JOBS.get(k); if (cur && cur.running) return null; const j = { running: true, stage: "준비", error: "", data: null, startedAt: Date.now(), cost: null, done: 0, total: 0 }; JOBS.set(k, j); return j; }
 function pickJson(txt) { txt = String(txt || ""); const s = txt.indexOf("{"), e = txt.lastIndexOf("}"); if (s < 0 || e <= s) throw new Error("응답에 JSON 이 없습니다 — " + txt.slice(0, 160)); return JSON.parse(txt.slice(s, e + 1)); }
-function jobClaude(j, prompt, o, onResult) {
+function jobClaude(j, prompt, o, onResult) { j.stage = "차례를 기다리는 중"; claudeGate().then(() => jobClaude1(j, prompt, o, onResult)); }
+function jobClaude1(j, prompt, o, onResult) {
   const args = ["-p", "--model", o.model || "claude-sonnet-5", "--output-format", "json", "--max-turns", String(o.turns || 30), "--allowedTools", ...(o.tools || ["Read"])];
   let pr; try { pr = spawn("claude", args, { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
   catch (e) { j.running = false; j.error = "실행 실패: " + e.message; return; }
@@ -771,7 +811,7 @@ function jobClaude(j, prompt, o, onResult) {
       const r = JSON.parse(line); if (r.is_error) throw new Error(friendlyErr(String(r.result || r.subtype || "")));
       j.cost = r.total_cost_usd || null;
       const data = pickJson(r.result); j.data = onResult(data, r) || data;
-    } catch (e) { j.error = e.message + (err && !/JSON/.test(e.message) ? "" : (err ? " / " + err.slice(0, 200) : "")) + (code ? " (code " + code + ")" : ""); logErr(e); }
+    } catch (e) { const raw = e.message + " " + err + " " + out.slice(0, 400); j.error = LOGIN_RE.test(raw) ? friendlyErr(raw) : e.message + (err && !/JSON/.test(e.message) ? "" : (err ? " / " + err.slice(0, 200) : "")) + (code ? " (code " + code + ")" : ""); logErr(e); }
     j.running = false; j.stage = j.error ? "실패" : "완료";
   });
 }
@@ -856,6 +896,7 @@ function intendedCopy(name, stem) {
 
 /* 오타 검수 (#4): 이미지 + OCR 줄 위치 → AI 가 실제 글자를 읽고 오타만 짚는다 → review/typo.json */
 async function startTypo(name) {
+  if (!(await loginOk())) return NEED_LOGIN;
   const j = jobNew("typo", name); if (!j) return { ok: false, error: "이미 오타 검사 중입니다" };
   (async () => {
     j.stage = "글자 위치 읽는 중";
@@ -892,6 +933,7 @@ lines 에는 OCR 줄 id 별로 네가 읽은 정확한 글자를 넣는다(글�
 
 /* 클라이언트 피드백 (#15): 붙여넣은 글 → 타일별 수정 지시로 구조화 (+ 글자 교체는 위치까지) */
 async function startFeedback(name, text) {
+  if (!(await loginOk())) return NEED_LOGIN;
   text = String(text || "").trim(); if (!text) return { ok: false, error: "피드백 내용이 비었습니다" };
   const j = jobNew("feedback", name); if (!j) return { ok: false, error: "이미 피드백을 정리하는 중입니다" };
   (async () => {
@@ -959,6 +1001,7 @@ async function startRef(name, urls, note) {
   const dir = path.join(ROOT, name, "ref"); fs.mkdirSync(dir, { recursive: true });
   const uploaded = listImages(dir, "").filter(i => !/^web\d+_/.test(i.name)).map(i => path.join(dir, i.name));
   if (!urls.length && !uploaded.length) return { ok: false, error: "경쟁사 URL 을 넣거나 상세페이지 캡처를 올려주세요" };
+  if (!(await loginOk())) return NEED_LOGIN;
   const j = jobNew("ref", name); if (!j) return { ok: false, error: "이미 분석 중입니다" };
   (async () => {
     const texts = [], shots = [];
@@ -1134,7 +1177,7 @@ async function handle(req, res) {
     if (p === "/local/export") { const n = q.get("name") || "", ver = (q.get("ver") || "v1").slice(0, 12); if (!needProj(res, n)) return;
       try { const r = buildExport(n, ver); actLog(n, "export", `클라이언트 프리뷰 ${ver} — ${r.count}장`, { file: "export/" + path.basename(r.path) }); return json(res, 200, Object.assign({ ok: true }, r)); } catch (e) { return json(res, 500, { ok: false, error: "내보내기 실패: " + e.message }); } }
     if (p === "/local/suggest") {
-      if (req.method === "POST") { const b = await bodyJson(req, 100000); return json(res, 200, SUG.start(b.name || q.get("name") || "", b.hint || {})); }
+      if (req.method === "POST") { const b = await bodyJson(req, 100000); return json(res, 200, await SUG.start(b.name || q.get("name") || "", b.hint || {})); }
       return json(res, 200, SUG.get());
     }
     if (p === "/local/update") { if (req.method === "POST") return json(res, 200, await UPD.act(q.get("do") || "check")); return json(res, 200, UPD.get()); }
@@ -1144,7 +1187,7 @@ async function handle(req, res) {
         const act = q.get("do") || "start";
         if (act === "stop") { const r = runFor(q.get("name") || ""); return json(res, 200, r ? r.stop() : { ok: false, error: "실행 중이 아닙니다" }); }
         const b = await bodyJson(req, 200000);
-        return json(res, 200, startRun(b.name || q.get("name") || "", b.mode || q.get("mode") || "make", b, null));
+        return json(res, 200, await startRun(b.name || q.get("name") || "", b.mode || q.get("mode") || "make", b, null));
       }
       const name = q.get("name") || "";
       if (!name) return json(res, 200, { ok: true, runs: [...RUNS.values()].map(r => r.summary()) });
