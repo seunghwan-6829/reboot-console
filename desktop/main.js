@@ -509,7 +509,7 @@ const STAGES = { make: ["준비", "사진 분석", "기획안", "타일 생성",
 const MAINSTAGE = { make: "타일 생성", revise: "수정 생성", plan: "기획안", tile: "타일 생성", productcut: "컷 생성", custom: "작업" };
 const MODE_LABEL = { make: "제작", revise: "검수 반영", plan: "기획안", tile: "한 장 제작", productcut: "제품 컷", custom: "AI 작업", resume: "이어서 하기" };
 const NEED_HF_MODES = new Set(["make", "revise", "tile", "productcut"]);
-const MARK = mode => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: ${(STAGES[mode] || STAGES.custom).join("|")}" 중 하나, ${mode === "plan" ? "기획 한 장을 확정할 때마다" : "이미지 한 장을 저장할 때마다"} "▶ 타일: n/N 이름". N 은 총 장수.`;
+const MARK = mode => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: ${(STAGES[mode] || STAGES.custom).join("|")}" 중 하나, ${mode === "plan" ? "기획 한 장을 확정할 때마다" : "이미지 한 장을 저장할 때마다"} "▶ 타일: n/N 이름". N 은 총 장수. 여러 장을 한 번에 만들 때도 한 장씩 저장할 때마다 이 줄을 남긴다. 진행 설명 문장은 한국어로 짧게 쓴다.`;
 const PROMPTS = {
   photo: mode => mode === "keep"
     ? `제품 사진 처리 = 원본 그대로 합성(TRACK A): 제품이 등장하는 타일은 remove_background → upscale_image → PIL 합성으로 원본 픽셀을 보존한다. 재생성 금지.`
@@ -592,14 +592,27 @@ const RUN_PROTO = {
     const mainIdx = Math.max(0, st.indexOf(this.mainStage()));
     // 생성 단계가 가장 길다: 앞 단계 25%, 생성 60%, 뒤 단계 15%
     if (this.stageIdx < mainIdx) return Math.round(4 + 21 * (this.stageIdx + 1) / Math.max(1, mainIdx));
-    if (this.stageIdx === mainIdx) return Math.round(25 + 60 * (this.tileTotal ? Math.min(1, this.tileDone / this.tileTotal) : 0.15));
+    if (this.stageIdx === mainIdx) {
+      // AI 가 "▶ 타일 n/N" 을 안 남겨도 막대가 서 있지 않게: 실제로 새로 저장된 타일 수 · 이 단계에 머문 시간으로 추정
+      let f;
+      if (this.tileTotal) f = Math.min(1, this.tileDone / this.tileTotal);
+      else { const fp = this.fileProg(), byFile = fp.total ? fp.done / fp.total : 0, byTime = 1 - Math.exp(-(Date.now() - (this.stageAt || this.startedAt)) / (15 * 60000)); f = Math.max(byFile, Math.min(.9, .06 + byTime * .84)); }
+      return Math.round(25 + 60 * Math.min(1, f));
+    }
     return Math.round(85 + 15 * (this.stageIdx - mainIdx) / Math.max(1, st.length - 1 - mainIdx));
   },
-  summary() { return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt, runId: this.startedAt,
+  summary() { const fp = this.running0() ? this.fileProg() : (this._fp || { done: 0, total: 0 }); return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt, runId: this.startedAt,
+    now: Date.now(), lastAt: this.lastAt || this.startedAt, stageAt: this.stageAt || this.startedAt, filesDone: fp.done, filesTotal: fp.total,
     stages: this.stages(), stage: this.stage, stageIdx: this.stageIdx, tileDone: this.tileDone, tileTotal: this.tileTotal, tileName: this.tileName, pct: this.pct(), last: this.last,
     resumes: this.resumes, pendingResume: this.pendingResume, stopped: this.userStopped, abort: this.abortReason, hf: this.hf, gen: this.gen, cost: this.cost, resumed: this.resumed,
     tile: this.opts.tile || "", op: this.opts.op || "", newId: this.opts.newId || "", canResume: !!(this.done && this.exit !== 0 && !this.abortReason), qid: this.qid, needLogin: !!(this.done && this.exit !== 0 && LOGIN_RE.test(this.lastErr)), needHf: this.abortReason === "hf", errText: this.exit ? this.lastErr.slice(0, 300) : "" }; },
-  setStage(name) { const st = this.stages(); const i = st.indexOf(name); if (i >= 0 && i >= this.stageIdx) { this.stageIdx = i; this.stage = name; } },
+  setStage(name) { const st = this.stages(); const i = st.indexOf(name); if (i >= 0 && i >= this.stageIdx) { if (i !== this.stageIdx) this.stageAt = Date.now(); this.stageIdx = i; this.stage = name; } },
+  /* 이번 작업에서 새로 저장(또는 고쳐 저장)된 타일 수 — 3초 캐시 */
+  fileProg() {
+    if (this._fp && Date.now() - this._fp.at < 3000) return this._fp;
+    let done = 0; try { const td = path.join(ROOT, this.name, "tiles"); for (const f of fs.readdirSync(td)) { if (!IMG.has(path.extname(f).toLowerCase()) || f.startsWith("_")) continue; try { if (fs.statSync(path.join(td, f)).mtimeMs >= this.startedAt - 2000) done++; } catch (e) {} } } catch (e) {}
+    this._fp = { at: Date.now(), done, total: Math.max(this.expect || 0, done) }; return this._fp;
+  },
   /* 텍스트 마커(▶ 단계 / ▶ 타일) 우선, 없으면 도구 호출로 추정 */
   track(kind, text) {
     if (kind === "ai") {
@@ -616,7 +629,8 @@ const RUN_PROTO = {
       this.last = t.slice(0, 140);
     }
   },
-  push(kind, text) { this.lines.push({ t: Date.now(), kind, text: String(text).slice(0, 4000) }); if (this.lines.length > 2000) this.lines.splice(0, this.lines.length - 2000); if (kind === "err") this.lastErr = String(text).slice(0, 400); },
+  running0() { return !!(this.proc && this.exit == null); },
+  push(kind, text) { this.lastAt = Date.now(); this.lines.push({ t: Date.now(), kind, text: String(text).slice(0, 4000) }); if (this.lines.length > 2000) this.lines.splice(0, this.lines.length - 2000); if (kind === "err") this.lastErr = String(text).slice(0, 400); },
   start(name, mode, o) {
     o = o || {};
     const photoMode = o.photoMode === "keep" ? "keep" : "regen";
@@ -647,7 +661,13 @@ const RUN_PROTO = {
       prompt = PROMPTS[mode](name, this.opts);
     } else this.opts = { photoMode };
     this.name = name; this.mode = STAGES[disp] ? disp : "custom"; this.lines = []; this.done = false; this.exit = null; this.startedAt = Date.now();
-    this.stage = ""; this.stageIdx = -1; this.tileDone = 0; this.tileTotal = 0; this.tileName = ""; this.last = "";
+    this.stage = ""; this.stageIdx = -1; this.tileDone = 0; this.tileTotal = 0; this.tileName = ""; this.last = ""; this.stageAt = this.startedAt; this.lastAt = this.startedAt;
+    try {
+      const d = path.join(ROOT, name), pl = readJson(path.join(d, "plan.json")), od = readJson(path.join(d, "order.json")), rv = readJson(path.join(d, "review.json"));
+      this.expect = this.mode === "make" ? ((pl && Array.isArray(pl.tiles) && pl.tiles.length) || (od && Array.isArray(od.layout) && od.layout.length) || 0)
+        : this.mode === "revise" ? Object.values((rv && rv.tiles) || {}).filter(r => r && (((r.regions || []).length) || String(r.note || "").trim())).length
+        : this.mode === "tile" ? 1 : 0;
+    } catch (e) { this.expect = 0; }
     // 바꾸기 전에 지금 타일을 버전 기록으로
     try { if (this.mode === "make" || this.mode === "revise") snapshotTiles(name); else if (this.mode === "tile" && this.opts.op !== "insert") snapshotTiles(name, [this.opts.tile]); } catch (e) { logErr(e); }
     writeRuns(name, j => { j.last = { mode: this.mode, opts: this.opts, at: this.startedAt, sid: this.sid || "", exit: null }; });
@@ -1219,7 +1239,8 @@ async function claudeUsage(force) {
     if (!tok) out = { ok: false, reason: "구독 로그인 정보가 없습니다" };
     else {
       const r = await fetch("https://api.anthropic.com/api/oauth/usage", { headers: { Authorization: "Bearer " + tok, "anthropic-beta": "oauth-2025-04-20", "Content-Type": "application/json" }, signal: AbortSignal.timeout(10000) });
-      if (!r.ok) out = { ok: false, reason: r.status === 401 ? "로그인 갱신 필요 — AI 작업을 한 번 돌리면 자동 갱신됩니다" : "HTTP " + r.status };
+      if (r.status === 429 && USAGE.c && USAGE.c.ok) { USAGE.cAt = Date.now() + 4 * 60000; return Object.assign({}, USAGE.c, { stale: true }); }   // 조회 한도 → 직전 값 유지, 5분 뒤 다시
+      if (!r.ok) out = { ok: false, reason: r.status === 401 ? "로그인 갱신 필요 — AI 작업을 한 번 돌리면 자동 갱신됩니다" : r.status === 429 ? "잠시 뒤 다시 확인합니다" : "HTTP " + r.status };
       else {
         const j = await r.json(); const w = x => x && typeof x === "object" && x.utilization != null ? { pct: Math.round(+x.utilization), resetsAt: x.resets_at || null } : null;
         out = { ok: true, five: w(j.five_hour), week: w(j.seven_day), weekOpus: w(j.seven_day_opus), weekSonnet: w(j.seven_day_sonnet),
@@ -1227,7 +1248,7 @@ async function claudeUsage(force) {
       }
     }
   } catch (e) { out = { ok: false, reason: String(e.message || e).slice(0, 120) }; }
-  USAGE.c = out; USAGE.cAt = Date.now(); return out;
+  USAGE.c = out; USAGE.cAt = Date.now() + (out.ok ? 0 : 4 * 60000); return out;
 }
 /* Higgsfield MCP 에 직접 JSON-RPC (initialize → tools/list → balance 류 도구 호출). 토큰은 로컬에서만 쓴다 */
 async function hfBalance(force) {

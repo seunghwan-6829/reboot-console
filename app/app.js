@@ -1264,30 +1264,37 @@ const Suggest = {
   act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); else if (k === "login") Login.prompt().then(ok => { if (ok) { this.err = ""; this.paint(); } }); }
 };
 
-/* ── AI 실행 패널 v2: 진행 링 · 흐르는 배경 · 단계 타임라인 · 초 단위 경과 · 완료 폭죽 · 실패 원인 카드 ── */
+/* ── AI 실행 패널 v3: 어두운 카드 · 세로 타임라인 · 빛나는 경로(진행 머리) · 큰 숫자 · 멈춤 감지 · 실패 원인 카드 ── */
 const FUN = { make: ["카피 문장을 고르는 중", "색 조합을 맞추는 중", "제품 사진을 다듬는 중", "여백을 계산하는 중", "글자 하나하나 검수하는 중", "섹션 순서를 정리하는 중", "고객이 멈출 지점을 만드는 중"], revise: ["표시한 영역을 확인하는 중", "톤을 그대로 유지하는 중", "고친 자리만 다시 그리는 중", "글자를 대조하는 중"],
   tile: ["앞뒤 장 톤을 맞추는 중", "이 장만 다시 그리는 중", "글자를 대조하는 중"], plan: ["섹션 흐름을 짜는 중", "카피를 다듬는 중"] };
-const RING_C = 2 * Math.PI * 52;
+const ROUTE_D = "M34 246 C 16 230, 22 204, 50 206 C 80 208, 74 236, 54 231 C 34 226, 56 190, 90 172 C 126 152, 108 116, 136 94 C 160 76, 150 52, 168 38 C 175 32, 179 27, 182 20";
 const RunUI = {
-  el: null, timer: null, next: 0, rid: 0, open: false, min: false, logOpen: false, name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null, clockT: null, last: null, t0: 0,
+  el: null, timer: null, next: 0, rid: 0, open: false, min: false, logOpen: false, name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null, clockT: null, last: null, t0: 0, rp: 0, rpTo: 0, raf: 0,
   ensure() {
     if (this.el) return this.el;
     this.el = el("div", "rp", `
-      <div class="rp-bg"><i></i><i></i><i></i></div>
-      <div class="rp-h"><span class="rp-dot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rp-el" id="runEl">0:00</span>
+      <div class="rp-h"><span class="rp-live"><i></i></span><b id="runT">AI 작업</b><span class="sp"></span>
         <button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기 (작업은 계속)">${svg("x")}</button></div>
-      <div class="rp-main">
-        <div class="rp-ring"><svg viewBox="0 0 120 120"><defs><linearGradient id="rpGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#F8480F"/></linearGradient></defs>
-          <circle class="trk" cx="60" cy="60" r="52"/><circle class="arc" id="rpArc" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}"/><circle class="comet" cx="60" cy="60" r="52" stroke-dasharray="26 ${RING_C}"/>
-          <path class="ok" d="M40 61 L54 75 L81 46"/><path class="no1" d="M45 45 L75 75"/><path class="no2" d="M75 45 L45 75"/></svg>
-          <div class="rp-pct"><b id="runPct">0</b><i>%</i></div></div>
-        <div class="rp-info"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rp-sub" id="runLast">시작하는 중…</div><div class="rfun" id="runFun"></div></div>
+      <div class="rp-body">
+        <div class="rp-tl" id="runTl"></div>
+        <div class="rp-map">
+          <svg viewBox="0 0 210 260" preserveAspectRatio="xMidYMid slice" class="rp-svg">
+            <defs><linearGradient id="rpG" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#F86010"/></linearGradient>
+              <filter id="rpGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+            <g class="streets"><path d="M-10 60 L220 120"/><path d="M-10 150 L220 95"/><path d="M60 -10 L150 270"/><path d="M150 -10 L110 270"/><path d="M-10 215 L220 245"/><path d="M180 -10 L220 60"/>
+              <text x="118" y="58" transform="rotate(-62 118 58)">기획안로</text><text x="16" y="140" transform="rotate(-12 16 140)">사진길</text><text x="150" y="186" transform="rotate(72 150 186)">타일대로</text><text x="70" y="232">검수길</text></g>
+            <path class="road" d="${ROUTE_D}"/><path class="route" id="rpRoute" d="${ROUTE_D}"/>
+            <g id="rpHead" class="head"><circle class="halo" r="11"/><circle class="halo2" r="18"/><path class="arrow" d="M0 -8 L6 6 L0 3 L-6 6 Z"/></g>
+            <circle class="goal" id="rpGoal" r="4"/>
+          </svg>
+          <div class="rp-big"><b id="runPct">0</b><i>%</i><small id="runEl">0:00 경과</small></div>
+        </div>
       </div>
-      <div class="rp-steps" id="runChips"></div>
+      <div class="rp-now"><span class="rfun" id="runFun"></span></div>
       <div class="rp-err" id="runErr" hidden></div>
       <div class="rtiles" id="runTiles"></div>
       <div class="rl" id="runL" hidden></div>
-      <div class="rp-f"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm" id="runResume" hidden>${svg("refresh")} 이어서 하기</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>
+      <div class="rp-f"><span id="runS"></span><span class="sp"></span><button class="rbtn2 dgr" id="runStop">${svg("stop")} 중단</button><button class="rbtn2" id="runResume" hidden>${svg("refresh")} 이어서 하기</button><button class="rbtn2 pri" id="runGo" hidden>${svg("check")} 검수로</button></div>
       <div class="rp-fx" id="runFx"></div>`);
     document.body.appendChild(this.el);
     $("#runMin", this.el).onclick = () => { this.min = !this.min; this.el.classList.toggle("min", this.min); };
@@ -1296,63 +1303,96 @@ const RunUI = {
     $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다. 나중에 <b>이어서 하기</b>로 남은 것만 이어서 할 수 있습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(this.name); } catch (e) { UI.toast(e.message, "w"); } };
     $("#runResume", this.el).onclick = () => this.resume();
     $("#runGo", this.el).onclick = async () => { const j = this.last || {}; this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); App.curTile = j.newId || j.tile || null; go("review"); };
-    $("#runErr", this.el).onclick = async e => { const b = e.target.closest("[data-fix]"); if (!b) return; const k = b.dataset.fix;
+    this.el.addEventListener("click", async e => { const b = e.target.closest("[data-fix]"); if (!b) return; const k = b.dataset.fix;
       if (k === "login") { if (await Login.prompt()) this.resume(); }
       else if (k === "hf") { if (await HF.prompt()) this.resume(); }
       else if (k === "resume") this.resume();
-      else if (k === "log") this.setLog(true); };
+      else if (k === "kick") this.kick();
+      else if (k === "log") this.setLog(true); });
     return this.el;
   },
   setLog(on) { this.logOpen = on; $("#runL", this.el).hidden = !on; this.el.classList.toggle("logon", on); if (on) { const L = $("#runL", this.el); L.scrollTop = L.scrollHeight; } },
   async resume() { const nm = this.name, md = this.mode; try { await Local.run(nm, "resume"); this.show(`이어서 하기 — ${nm}`, nm, md); UI.toast("이어서 진행합니다 — 이미 만든 파일은 그대로 둡니다", "o"); } catch (e) { if (!e.needLogin && !e.needHf) UI.alert("이어서 하지 못했습니다", esc(e.message), "d"); } },
+  /* 오래 응답이 없을 때: 멈추고 같은 세션으로 다시 이어서 */
+  async kick() { if (!(await UI.confirm("다시 이어서 진행할까요?", "지금 작업을 멈추고, 이미 만든 파일은 그대로 둔 채 같은 흐름으로 이어서 다시 진행합니다.", { ok: "다시 이어서", tone: "b" }))) return; try { await Local.runStop(this.name); await sleep(2500); await this.resume(); } catch (e) { UI.toast(e.message, "w"); } },
   show(title, name, mode) {
     this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.seen = new Set(); this.funI = 0; this.rid = 0; this.last = null; this.t0 = Date.now();
-    this.el.classList.remove("min", "done", "fail", "on"); void this.el.offsetWidth; this.el.classList.add("on", "live");
+    this.el.classList.remove("min", "done", "fail", "on", "stall"); void this.el.offsetWidth; this.el.classList.add("on", "live");
     $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runTiles", this.el).classList.remove("has"); $("#runErr", this.el).hidden = true; $("#runFx", this.el).innerHTML = "";
-    $("#runGo", this.el).hidden = true; $("#runResume", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…"; this.setLog(false);
-    this.setRing(0); $("#runPct", this.el).textContent = "0"; $("#runChips", this.el).innerHTML = ""; delete $("#runChips", this.el).dataset.key;
+    $("#runGo", this.el).hidden = true; $("#runResume", this.el).hidden = true; $("#runStop", this.el).hidden = false; this.setLog(false);
+    $("#runPct", this.el).textContent = "0"; const T = $("#runTl", this.el); T.innerHTML = ""; delete T.dataset.key;
+    this.rp = 0; this.rpTo = 0; this.drawRoute(0);
     this.next = 0; this.poll(); this.fun(); this.tiles(); this.clock();
   },
-  hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); [this.timer, this.funT, this.tileT, this.clockT].forEach(clearInterval); this.timer = this.funT = this.tileT = this.clockT = null; },
-  clock() { clearInterval(this.clockT); const E = $("#runEl", this.el); const tick = () => { const s = Math.max(0, Math.round((Date.now() - this.t0) / 1000)); E.textContent = `${Math.floor(s / 60)}:${pad2(s % 60)}${this.last && this.last.resumes ? ` · 이어하기 ${this.last.resumes}` : ""}`; }; tick(); this.clockT = setInterval(tick, 1000); },
+  hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); [this.timer, this.funT, this.tileT, this.clockT].forEach(clearInterval); this.timer = this.funT = this.tileT = this.clockT = null; cancelAnimationFrame(this.raf); },
+  clock() { clearInterval(this.clockT); const E = $("#runEl", this.el); const tick = () => { const s = Math.max(0, Math.round((Date.now() - this.t0) / 1000)); E.textContent = `${Math.floor(s / 60)}:${pad2(s % 60)} 경과`; this.stallCheck(); }; tick(); this.clockT = setInterval(tick, 1000); },
   fun() { clearInterval(this.funT); const list = FUN[this.mode] || FUN.make; const F = $("#runFun", this.el); const step = () => { const n = el("span", "in", esc(list[this.funI++ % list.length])); F.innerHTML = ""; F.appendChild(n); }; step(); this.funT = setInterval(step, 3800); },
-  setRing(pct) { const a = $("#rpArc", this.el); if (a) a.style.strokeDashoffset = String(RING_C * (1 - clamp(pct, 0, 100) / 100)); },
-  /* 완성되는 타일을 8초마다 확인해 미니 스트립에 팝인 (바뀐 파일도 다시 뜬다) */
-  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); if (!box) return; (p.tiles || []).filter(t => !/^_/.test(t.name)).forEach(t => { const key = t.name + "@" + t.mtime; if (this.seen.has(key)) return; const first = !this.primed; this.seen.add(key); if (first && this.mode !== "make") return; const d = el("div", "rt", `<img src="${t.url}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); this.primed = true; box.classList.toggle("has", box.children.length > 0); }; this.primed = false; tick(); this.tileT = setInterval(tick, 8000); },
-  paint(j) {
-    const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100), okDone = j.done && j.exit === 0;
-    const word = j.pendingResume ? "이어서 진행" : j.done ? (okDone ? "완료" : j.stopped && !j.needLogin && !j.needHf ? "중단됨" : "멈춤") : (idx >= 0 ? st[idx] : "준비 중");
-    const W = $("#runWord", this.el);
-    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); W.removeAttribute("id"); sw.appendChild(nw); nw.id = "runWord"; setTimeout(() => { W.remove(); nw.classList.remove("in"); }, 420); }
-    const P = $("#runPct", this.el); if (P.textContent !== String(pct)) { P.textContent = pct; P.classList.remove("bump"); void P.offsetWidth; P.classList.add("bump"); }
-    this.setRing(pct);
-    // 단계 줄은 단계 목록이 바뀔 때만 새로 만들고(등장 애니메이션 1번), 이후엔 상태 클래스만 바꿔 부드럽게 전환
-    const C = $("#runChips", this.el), key = st.join("|");
-    if (C.dataset.key !== key) { C.dataset.key = key; C.innerHTML = st.map((nm, k) => `<div class="st" style="--k:${k}"><span class="nd"></span><em>${esc(nm)}</em></div>`).join("") + `<i class="ln"></i>`; }
-    $$(".st", C).forEach((node, k) => { const s = k < idx || okDone ? "past" : k === idx && !j.done ? "cur" : k === idx ? "stop" : ""; if (node.dataset.s === s) return; node.dataset.s = s; node.className = "st " + s + " chg";
-      $(".nd", node).innerHTML = s === "past" ? svg("check") : s === "cur" ? "<i></i>" : String(k + 1); });
-    const ln = $(".ln", C); if (ln) ln.style.setProperty("--w", (st.length > 1 ? clamp((okDone ? st.length - 1 : Math.max(0, idx)) / (st.length - 1), 0, 1) * 100 : 0) + "%");
-    const gen = j.tileTotal ? `타일 ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
-    const nice = t => { t = String(t || ""); const m = t.match(/^([\w_]+) — (.*)$/); if (!m) return t; const base = m[2].split(/[\\/]/).pop();
-      const v = /^mcp__higgsfield/.test(m[1]) ? "이미지 만드는 중" : { Read: "보는 중", Write: "쓰는 중", Edit: "고치는 중", MultiEdit: "고치는 중", Bash: "작업하는 중", Glob: "파일 찾는 중", Grep: "내용 찾는 중", WebFetch: "페이지 읽는 중" }[m[1]] || "작업 중";
-      return /^mcp__higgsfield/.test(m[1]) ? v : `${base} ${v}`; };
-    $("#runLast", this.el).innerHTML = j.pendingResume ? "작업이 끊겨 같은 세션으로 자동으로 이어서 진행합니다…" : j.done ? (okDone ? "다 만들었습니다 — 검수로 넘어갑니다" : "아래 안내대로 한 번만 눌러주면 이어서 진행합니다") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(nice(j.last))}` : "") : esc(nice(j.last) || "…"));
+  /* 경로 위 진행 머리를 부드럽게 움직인다 */
+  drawRoute(p) {
+    const R = $("#rpRoute", this.el), H = $("#rpHead", this.el), G = $("#rpGoal", this.el); if (!R) return;
+    const L = R.getTotalLength(), at = clamp(p, 0, 100) / 100 * L;
+    R.style.strokeDasharray = `${L}`; R.style.strokeDashoffset = `${L - at}`;
+    const a = R.getPointAtLength(Math.max(0, at)), b = R.getPointAtLength(Math.max(0, at - 3)), c = R.getPointAtLength(Math.min(L, at + 3));
+    const ang = Math.atan2(c.y - b.y, c.x - b.x) * 180 / Math.PI + 90;
+    H.setAttribute("transform", `translate(${a.x.toFixed(1)} ${a.y.toFixed(1)}) rotate(${ang.toFixed(1)})`);
+    if (G && !G.dataset.set) { const e = R.getPointAtLength(L); G.setAttribute("cx", e.x); G.setAttribute("cy", e.y); G.dataset.set = 1; }
   },
-  /* 실패 이유를 사람 말로 + 해결 버튼 하나 */
+  /* 시간 기준으로 부드럽게 — 창이 가려져 프레임이 멈춰도 끝값은 반드시 맞춘다 */
+  tween(to) {
+    if (to === this.rpTo && Math.abs(this.rp - to) < .2) return;
+    this.rpTo = to; cancelAnimationFrame(this.raf); clearTimeout(this.snapT);
+    const from = this.rp, t0 = performance.now(), dur = 1100;
+    const step = now => { const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3); this.rp = from + (to - from) * e; this.drawRoute(this.rp); if (k < 1) this.raf = requestAnimationFrame(step); };
+    this.raf = requestAnimationFrame(step);
+    this.snapT = setTimeout(() => { cancelAnimationFrame(this.raf); this.rp = to; this.drawRoute(to); }, dur + 150);
+  },
+  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); if (!box) return; (p.tiles || []).filter(t => !/^_/.test(t.name)).forEach(t => { const key = t.name + "@" + t.mtime; if (this.seen.has(key)) return; const first = !this.primed; this.seen.add(key); if (first && (this.mode !== "make" || t.mtime < this.t0 - 5000)) return; const d = el("div", "rt", `<img src="${t.url}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); this.primed = true; box.classList.toggle("has", box.children.length > 0); }; this.primed = false; tick(); this.tileT = setInterval(tick, 8000); },
+  nice(t) { t = String(t || ""); const m = t.match(/^([\w_]+) — (.*)$/); if (!m) return t.replace(/\s+/g, " ");
+    if (/^mcp__higgsfield/.test(m[1])) return /upload|confirm/.test(m[1]) ? "원본 사진을 올리는 중" : /upscale/.test(m[1]) ? "사진을 선명하게 키우는 중" : /wait|status/.test(m[1]) ? "이미지가 그려지길 기다리는 중" : /balance/.test(m[1]) ? "크레딧 확인" : "이미지를 그리는 중";
+    const base = m[2].split(/[\\/]/).pop(); const v = { Read: "보는 중", Write: "쓰는 중", Edit: "고치는 중", MultiEdit: "고치는 중", Bash: "처리하는 중", PowerShell: "처리하는 중", Glob: "파일 찾는 중", Grep: "내용 찾는 중", WebFetch: "페이지 읽는 중" }[m[1]] || "작업 중";
+    return m[1] === "Bash" || m[1] === "PowerShell" ? `${base.slice(0, 40)}` : `${base} ${v}`; },
+  /* 세로 타임라인: 목록이 바뀔 때만 새로 만들고 상태 클래스만 바꾼다 */
+  timeline(j) {
+    const st = j.stages || [], idx = j.stageIdx, okDone = j.done && j.exit === 0, T = $("#runTl", this.el), key = st.join("|");
+    if (T.dataset.key !== key) { T.dataset.key = key; T.innerHTML = st.map((nm, k) => `<div class="tl-i" style="--k:${k}"><span class="tl-n"><i></i></span><div class="tl-t"><b>${esc(nm)}</b><small></small></div></div>`).join(""); }
+    const items = $$(".tl-i", T);
+    items.forEach((it, k) => { const s = k < idx || okDone ? "past" : k === idx ? (j.done ? "stop" : "cur") : "next"; if (it.dataset.s !== s) { it.dataset.s = s; it.className = "tl-i " + s + " chg"; } });
+    const cur = items[Math.max(0, Math.min(items.length - 1, okDone ? items.length - 1 : idx))];
+    items.forEach(it => { if (it !== cur) $("small", it).textContent = ""; });
+    if (cur) {
+      const fdone = j.tileTotal ? j.tileDone : j.filesDone, ftot = j.tileTotal || j.filesTotal;
+      const sub = j.pendingResume ? "끊겨서 같은 흐름으로 자동으로 이어가는 중" : j.done ? (okDone ? "다 만들었습니다" : "") : [ftot ? `${fdone || 0}/${ftot}장${j.tileName ? " · " + j.tileName : ""}` : "", this.nice(j.last)].filter(Boolean).join(" — ");
+      $("small", cur).textContent = sub;
+    }
+    T.style.setProperty("--fill", st.length > 1 ? clamp((okDone ? st.length - 1 : Math.max(0, idx)) / (st.length - 1), 0, 1) : 0);
+  },
+  /* 마지막 응답 이후 시간 — 이미지 생성은 몇 분씩 조용할 수 있으니 구분해서 알려준다 */
+  stallCheck() {
+    const j = this.last; if (!j || !j.running || j.pendingResume) { this.el.classList.remove("stall"); return; }
+    const skew = j.now ? Date.now() - j.now : 0, idle = (Date.now() - skew - (j.lastAt || j.startedAt)) / 60000, S = $("#runS", this.el);
+    this.el.classList.toggle("stall", idle >= 20);
+    S.innerHTML = idle >= 20 ? `<span class="warn">${Math.floor(idle)}분째 응답이 없습니다</span> <button class="rbtn2 sm" data-fix="kick">${svg("refresh")} 다시 이어서</button>` : idle >= 3 ? `<span class="calm">이미지를 그리는 중 — 마지막 응답 ${Math.floor(idle)}분 전 (한 묶음에 몇 분 걸릴 수 있어요)</span>` : "창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
+  },
+  paint(j) {
+    const pct = clamp(j.pct || 0, 0, 100);
+    const P = $("#runPct", this.el); if (P.textContent !== String(pct)) { P.textContent = pct; P.classList.remove("bump"); void P.offsetWidth; P.classList.add("bump"); }
+    this.tween(j.done && j.exit === 0 ? 100 : pct);
+    this.timeline(j);
+  },
   errCard(j) {
     const E = $("#runErr", this.el);
     let ic = "warn", t = "작업이 멈췄습니다", d = "", btn = "";
-    if (j.needLogin) { ic = "lock"; t = "Claude 로그인이 만료됐습니다"; d = "다시 로그인하면 이미 만든 것은 그대로 두고 이어서 진행합니다."; btn = `<button class="btn sm pri" data-fix="login">${svg("lock")} 다시 로그인</button>`; }
-    else if (j.needHf) { ic = "lock"; t = "Higgsfield 연결이 필요합니다"; d = "이미지 생성 서버와의 연결이 끊겼습니다. 연결하면 바로 이어서 진행합니다."; btn = `<button class="btn sm pri" data-fix="hf">${svg("lock")} Higgsfield 연결</button>`; }
-    else if (j.stopped) { ic = "stop"; t = "중단했습니다"; d = "만든 파일은 그대로 있습니다."; btn = j.canResume ? `<button class="btn sm pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : ""; }
-    else { d = esc(String(j.errText || "").split("\n")[0].slice(0, 180)) || "원인은 로그에서 볼 수 있습니다."; btn = (j.canResume ? `<button class="btn sm pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : "") + `<button class="btn sm ghost" data-fix="log">${svg("doc")} 로그 보기</button>`; }
+    if (j.needLogin) { ic = "lock"; t = "Claude 로그인이 만료됐습니다"; d = "다시 로그인하면 이미 만든 것은 그대로 두고 이어서 진행합니다."; btn = `<button class="rbtn2 pri" data-fix="login">${svg("lock")} 다시 로그인</button>`; }
+    else if (j.needHf) { ic = "lock"; t = "Higgsfield 연결이 필요합니다"; d = "이미지 생성 서버와의 연결이 끊겼습니다. 연결하면 바로 이어서 진행합니다."; btn = `<button class="rbtn2 pri" data-fix="hf">${svg("lock")} Higgsfield 연결</button>`; }
+    else if (j.stopped) { ic = "stop"; t = "중단했습니다"; d = "만든 파일은 그대로 있습니다."; btn = j.canResume ? `<button class="rbtn2 pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : ""; }
+    else { d = esc(String(j.errText || "").split("\n")[0].slice(0, 180)) || "원인은 로그에서 볼 수 있습니다."; btn = (j.canResume ? `<button class="rbtn2 pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : "") + `<button class="rbtn2" data-fix="log">${svg("doc")} 로그 보기</button>`; }
     E.innerHTML = `<span class="ei">${svg(ic)}</span><div><b>${t}</b><small>${d}</small><div class="eb">${btn}</div></div>`;
     E.hidden = false;
   },
   confetti() {
-    const F = $("#runFx", this.el); F.innerHTML = ""; const cols = ["#F86010", "#FFB020", "#2F6BFF", "#0F9D58", "#E91E63", "#8B5CF6"];
-    for (let i = 0; i < 34; i++) { const s = el("i"); const a = Math.random() * Math.PI * 2, r = 70 + Math.random() * 120; s.style.cssText = `--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r - 40}px;--r:${Math.random() * 720 - 360}deg;--d:${(Math.random() * .25).toFixed(2)}s;background:${cols[i % cols.length]}`; F.appendChild(s); }
-    setTimeout(() => { F.innerHTML = ""; }, 1800);
+    const F = $("#runFx", this.el); F.innerHTML = ""; const cols = ["#F86010", "#FFB020", "#FFFFFF", "#FF7A33", "#FFD9A8"];
+    for (let i = 0; i < 36; i++) { const s = el("i"); const a = Math.random() * Math.PI * 2, r = 60 + Math.random() * 130; s.style.cssText = `--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r - 30}px;--r:${Math.random() * 720 - 360}deg;--d:${(Math.random() * .25).toFixed(2)}s;background:${cols[i % cols.length]}`; F.appendChild(s); }
+    setTimeout(() => { F.innerHTML = ""; }, 1900);
   },
   async poll() {
     clearInterval(this.timer);
@@ -1366,11 +1406,10 @@ const RunUI = {
       if ((j.lines || []).length && this.logOpen) L.scrollTop = L.scrollHeight;
       this.next = j.next != null ? j.next : this.next;
       this.last = j; this.paint(j);
-      const el2 = $("#runS", this.el);
-      if (j.running) el2.textContent = j.pendingResume ? "자동 이어하기 대기 중" : "창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
+      if (j.running) this.stallCheck();
       else if (j.done) {
         [this.timer, this.funT, this.tileT, this.clockT].forEach(clearInterval); this.timer = this.funT = this.tileT = this.clockT = null;
-        this.el.classList.remove("live"); this.el.classList.add(j.exit === 0 ? "done" : "fail"); el2.textContent = j.exit === 0 ? "완료" : "";
+        this.el.classList.remove("live", "stall"); this.el.classList.add(j.exit === 0 ? "done" : "fail"); $("#runS", this.el).textContent = j.exit === 0 ? "완료" : "";
         $("#runStop", this.el).hidden = true; $("#runFun", this.el).innerHTML = "";
         $("#runGo", this.el).hidden = j.exit !== 0; $("#runResume", this.el).hidden = true;
         Local._projects = null; Usage.load(true); QueueUI.load().then(() => renderSide());
@@ -1380,14 +1419,14 @@ const RunUI = {
           if (same) {
             await FS.load(FS.name, true); renderSide();
             if (j.mode === "plan") UI.toast("기획안을 만들었습니다", "o");
-            else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 1600); }
+            else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 1800); }
           } else UI.toast(`${this.name} ${MODE_LABEL[j.mode] || ""} 완료 — [검수로] 를 누르면 그 프로젝트로 이동합니다`, "o");
         } else {
           this.errCard(j); this.min = false; this.el.classList.remove("min");
           if (j.needLogin) Login.prompt().then(ok => { if (ok) this.resume(); }); else if (j.needHf) HF.prompt().then(ok => { if (ok) this.resume(); });
           if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); });
         }
-      } else el2.textContent = "";
+      }
     };
     await tick(); this.timer = setInterval(tick, 1500);
   }
