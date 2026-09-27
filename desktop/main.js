@@ -512,8 +512,34 @@ const NEED_HF_MODES = new Set(["make", "revise", "tile", "productcut"]);
 const MARK = mode => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: ${(STAGES[mode] || STAGES.custom).join("|")}" 중 하나, ${mode === "plan" ? "기획 한 장을 확정할 때마다" : "이미지 한 장을 저장할 때마다"} "▶ 타일: n/N 이름". N 은 총 장수. 여러 장을 한 번에 만들 때도 한 장씩 저장할 때마다 이 줄을 남긴다. 진행 설명 문장은 한국어로 짧게 쓴다.`;
 const PROMPTS = {
   photo: mode => mode === "keep"
-    ? `제품 사진 처리 = 원본 그대로 합성(TRACK A): 제품이 등장하는 타일은 remove_background → upscale_image → PIL 합성으로 원본 픽셀을 보존한다. 재생성 금지.`
-    : `제품 사진 처리 = AI 고화질 재현(사용자 선택): 원본 사진이 저화질이므로 그대로 쓰지 말고, 원본을 image_references 로 넣어(먼저 upscale_image 를 최대 2회) 제품의 형태·비율·색·로고·라벨 글자(글자 모양·배치까지)를 원본과 똑같이 유지한 스튜디오 품질 제품 컷을 gpt_image_2_5 · resolution 2k · quality high 로 새로 만든다(깨끗한 조명·선명한 라벨·있어 보이는 연출). 라벨 글자는 확대해서 한 글자씩 원본과 대조한다. 라벨에 실제로 있는 글자는 철자를 프롬프트에 그대로 명시하고, 없는 글자·인증마크·원산지·수치는 절대 추가하지 않는다. 생성 후 원본과 나란히 놓고 로고·글자·형태가 다르면 최대 2회 재생성, 그래도 다르면 그 타일만 TRACK A(원본 합성)로 후퇴하고 기획안에 【확인】 을 남긴다.`,
+    ? `제품 사진 처리 = 원본 픽셀 보존(사용자 선택): 제품 라벨·로고가 크게 보이는 정면 클로즈업 1~2장만 README 6-4 경로(remove_background → upscale_image → PIL 합성)로 원본 픽셀을 그대로 쓴다. 단 같은 누끼 컷을 여러 장에 반복해 앉히지 않는다 — 원본이 여러 장이면 장마다 다른 원본·크기·배치를 쓰고, 나머지 섹션은 README 6-7 대로 카피 속 장면(사용 상황·손·사람·원재료·디테일·전후)을 새로 생성한다. 이때 제품이 보이면 원본을 image_references 로 넣어 형태·로고·라벨 글자를 원본과 똑같이 유지한다.`
+    : `제품 사진 처리 = AI 고화질 재현(사용자 선택): 원본이 저화질이므로 그대로 붙이지 않는다. 원본은 upscale_image(최대 2회)·업로드를 한 번만 해 두고, **제품이 나오는 섹션마다 그 섹션 카피에 맞는 새 장면을** 원본을 image_references 로 넣어 gpt_image_2_5 · resolution 2k · quality high 로 생성한다(README 6-7 — 한 장을 만들어 여러 섹션에 돌려쓰기 금지). 제품의 형태·비율·색·로고·라벨 글자(글자 모양·배치까지)는 원본과 똑같이, 각도·연출·상황·조명·소품만 섹션마다 다르게. 라벨에 실제로 있는 글자는 철자를 프롬프트에 그대로 명시하고, 없는 글자·인증마크·원산지·수치는 절대 추가하지 않는다. 매 장 라벨을 확대해 원본과 한 글자씩 대조하고, 다르면 최대 2회 재생성, 그래도 다르면 그 장만 제품을 작게·측면으로 두거나 6-4 합성으로 후퇴하고 기획안에 【확인】 을 남긴다.`,
+  /* 최근 다른 프로젝트들의 아트 디렉션 — 톤앤매너가 겹치지 않게 프롬프트에 넣는다 */
+  recentStyles(n) {
+    const out = [];
+    try {
+      const ps = fs.readdirSync(ROOT).filter(x => x !== n && isProjectDir(x) && isFile(path.join(ROOT, x, "기획안.md")))
+        .map(x => ({ x, t: fs.statSync(path.join(ROOT, x, "기획안.md")).mtimeMs })).sort((a, b) => b.t - a.t).slice(0, 6);
+      for (const { x } of ps) {
+        const md = fs.readFileSync(path.join(ROOT, x, "기획안.md"), "utf8");
+        const i = md.search(/#+\s*아트\s*디렉션/);
+        let sum = "";
+        if (i >= 0) sum = md.slice(i, i + 700).split(/\n#+\s/)[0].replace(/^#+[^\n]*\n/, "").replace(/\s+/g, " ").trim().slice(0, 260);
+        else { const hints = (md.match(/[^\n]*(배경|팔레트|톤|컬러|#[0-9A-Fa-f]{6})[^\n]*/g) || []).slice(0, 4).join(" / "); sum = hints.replace(/\s+/g, " ").slice(0, 260); }
+        if (sum) out.push(`- ${x}: ${sum}`);
+      }
+    } catch (e) {}
+    return out.length ? `[최근 프로젝트 톤앤매너 — 이것들과 겹치지 않게]\n${out.join("\n")}` : "";
+  },
+  /* 섹션 이미지 · 톤앤매너 · 비율 규칙 (README 6-7·6-8·6-9 요약) */
+  design(n) {
+    return `[디자인 필수 규칙 — README 6-7·6-8·6-9]
+1) 아트 디렉션: ${n}/기획안.md 맨 위에 "## 아트 디렉션" 을 먼저 쓴다 — 콘셉트 한 줄, 팔레트(배경 2~3색+메인+포인트 HEX), 타이포 인상, 레이아웃 시스템, 사진 스타일, 장식 요소. 상품·타깃·브리프 분위기에서 출발하고 아래 최근 프로젝트들과 배경색·팔레트·레이아웃이 겹치지 않게 고른다. "어두운 남색/검정 배경+흰 글자" 는 브리프가 요구할 때만. 한 페이지 안에서도 밝은 장·어두운 장·사진 장을 리듬 있게 섞어 모든 장이 같은 배경이 되지 않게 한다.
+2) 섹션마다 새 이미지: 기획안 표에 섹션마다 "비주얼"(그 카피를 읽은 고객이 떠올릴 구체적 장면)을 정하고, 모든 섹션의 장면·구도·앵글·거리·배경·소품이 서로 다르게 한다. 같은 이미지를 크롭·반전·색 변경으로 재사용 금지. 연출 컷·사용 장면(손·사람)·디테일 매크로·구성 플랫레이·스케일·원재료·전후 비교·라이프스타일을 섞는다. 다 만든 뒤 tiles 를 한 번에 훑어 비슷한 두 장이 있으면 하나를 다른 장면으로 다시 만든다.
+3) 비율은 섹션 내용이 정한다(9:16 고집 금지): 카피가 짧고 한 장면이 주인공이면 4:5 또는 3:4, 비교·제품 정보에 넣을 정보가 적으면 3:4, 배송 같은 띠 배너는 16:9, 쌓을 내용이 많을 때만 9:16. 어떤 비율이든 빈 면이 화면의 1/3 을 넘으면 실패 — 비율을 줄이거나 요소를 채운다. 기획안 표에 섹션마다 비율을 적고 manifest.json ratio 에 실제 비율을 남긴다.
+4) 문제·해결 섹션은 9:16 으로 풍성하게: 문제 = 고객 상황 사진/일러스트 + 불편 포인트 2~3개(말풍선·체크·아이콘 카드) + 감정을 찌르는 헤드 + 기존 방법의 한계 한 줄. 해결 = 제품이 주인공인 히어로 컷 + 해결 포인트 2~3개(아이콘·숫자·짧은 근거) + 전후 비교나 사용 장면 같은 증거. 글자 몇 줄 + 빈 배경 금지.
+${PROMPTS.recentStyles(n)}`;
+  },
   /* 승인된 기획안 · 승인된 제품 컷이 있으면 그것을 따른다 */
   extras(n) {
     const d = path.join(ROOT, n), out = [];
@@ -522,23 +548,25 @@ const PROMPTS = {
     return out.join("\n");
   },
   make: (n, o) => `${MARK("make")}
-${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙, 특히 6-4 제품 무왜곡 TRACK A, 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. ${PROMPTS.photo(o.photoMode)}
+${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙 — 특히 6-4 제품 무왜곡, 6-7 섹션마다 새 이미지, 6-8 아트 디렉션, 6-9 비율 — 와 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md: 아트 디렉션 + 섹션별 카피·비주얼·비율 표) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. ${PROMPTS.photo(o.photoMode)}
+${PROMPTS.design(n)}
 ${PROMPTS.extras(n)}
 기존 tiles/ 파일은 콘솔이 tiles/_history 에 이미 백업했으니 덮어써도 된다. 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
   plan: (n, o) => `${MARK("plan")}
 ${n} 의 기획안만 먼저 짜줘. 이번에는 이미지를 만들지 않는다(Higgsfield 호출 금지). 먼저 README.md 를 읽고 카피·섹션 규칙과 8절 절대 금지를 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고, ${n} 폴더의 제품 사진(최상위 이미지 파일)을 Read 로 한 번에 모두 본 뒤 ${n}/기획안.md 와 ${n}/plan.json 을 쓴다.
-plan.json 형식(JSON 하나, 다른 키 금지): {"tiles":[{"n":"01","name":"섹션 이름","goal":"이 장의 역할 한 줄","head":"메인 카피","sub":"서브 카피","body":"본문·보조 문구(여러 줄은 \\n)","visual":"비주얼 연출 설명 1~2문장","product":true}],"confirm":["고객에게 확인이 필요한 사항"]}
+plan.json 형식(JSON 하나, 다른 키 금지): {"art":"아트 디렉션 요약","tiles":[{"n":"01","name":"섹션 이름","goal":"이 장의 역할 한 줄","head":"메인 카피","sub":"서브 카피","body":"본문·보조 문구(여러 줄은 \\n)","visual":"이 카피에 맞는 구체적 장면 1~2문장(다른 섹션과 겹치지 않게)","ratio":"9:16|4:5|3:4|1:1|16:9","product":true}],"confirm":["고객에게 확인이 필요한 사항"]}
+${PROMPTS.design(n)}
 n 은 01부터 두 자리. 섹션 순서는 order.json 의 페이지 구성을 따른다. 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓰고, 없으면 해당 문구 자리에 【실제 데이터】 라고 쓴다. ${o.note ? "사용자 요청: " + o.note : ""} 끝나면 마지막 줄에 '완료: 기획 N장' 이라고 답한다.`,
   tile: (n, o) => {
     const list = tileFiles(n).map(t => t.stem), i = list.indexOf(o.tile), prev = list[i - 1] || "", next = list[i + 1] || "";
     const refs = [o.tile, prev, next].filter(Boolean).map(s => `${n}/tiles/${s}.png`).join(", ");
     return o.op === "insert"
       ? `${MARK("tile")}
-${n} 에서 타일 ${o.tile} 바로 뒤에 새 타일 한 장을 추가해줘. 먼저 README.md 규칙을 읽는다. ${n}/기획안.md 와 tiles/manifest.json 으로 전체 흐름을 파악하고, 앞뒤 타일(${refs})을 Read 로 보고 image_references 로 넣어 폭·비율·톤앤매너·팔레트·서체·여백을 똑같이 맞춘다. 사용자 요청: ${o.note || "(없음 — 흐름상 빠진 내용을 한 장 보강)"}. ${PROMPTS.photo(o.photoMode)}
+${n} 에서 타일 ${o.tile} 바로 뒤에 새 타일 한 장을 추가해줘. 먼저 README.md 규칙을 읽는다. ${n}/기획안.md 와 tiles/manifest.json 으로 전체 흐름을 파악하고, 앞뒤 타일(${refs})을 Read 로 보고 image_references 로 넣어 톤앤매너·팔레트·서체·장식 요소를 맞추되, 장면·구도는 다른 어떤 장과도 겹치지 않는 새 이미지로 만든다(README 6-7). 비율은 내용에 맞게 고른다(6-9). 사용자 요청: ${o.note || "(없음 — 흐름상 빠진 내용을 한 장 보강)"}. ${PROMPTS.photo(o.photoMode)}
 ${PROMPTS.extras(n)}
 결과 파일명은 반드시 ${n}/tiles/${o.newId}.png. manifest.json 에 "${o.newId}": {"name","copy","ratio"} 항목만 추가하고 _order 를 포함한 다른 키는 그대로 둔다(순서는 콘솔이 넣는다). 기획안.md 에도 이 장을 추가한다. 한 글자씩 오타 검수. 끝나면 마지막 줄에 '완료: 타일 1장'.`
       : `${MARK("tile")}
-${n} 의 타일 ${o.tile} 한 장만 다시 만들어줘. 먼저 README.md 규칙을 읽는다. ${n}/tiles/manifest.json 과 ${n}/기획안.md 에서 ${o.tile} 의 섹션 이름·카피를 확인하고, 지금 이미지와 앞뒤 타일(${refs})을 Read 로 보고 image_references 로 넣어 톤앤매너·팔레트·서체·여백을 맞춘다. 사용자 요청: ${o.note || "(없음 — 같은 기획으로 완성도를 더 높여서)"}. 요청에 없는 카피는 바꾸지 않는다. ${PROMPTS.photo(o.photoMode)}
+${n} 의 타일 ${o.tile} 한 장만 다시 만들어줘. 먼저 README.md 규칙을 읽는다. ${n}/tiles/manifest.json 과 ${n}/기획안.md 에서 ${o.tile} 의 섹션 이름·카피를 확인하고, 지금 이미지와 앞뒤 타일(${refs})을 Read 로 보고 톤앤매너·팔레트·서체를 맞추되, 이미지는 이 장 카피에 맞는 장면으로 새로 만들고 다른 장과 같은 사진을 쓰지 않는다(README 6-7). 빈 여백이 1/3 을 넘으면 비율을 줄이거나 요소를 채운다(6-9, 문제·해결 장은 9:16 풍성하게). 사용자 요청: ${o.note || "(없음 — 같은 기획으로 완성도를 더 높여서)"}. 요청에 없는 카피는 바꾸지 않는다. ${PROMPTS.photo(o.photoMode)}
 ${PROMPTS.extras(n)}
 결과는 ${n}/tiles/${o.tile}.png 로 저장한다(기존 파일은 콘솔이 tiles/_history 에 이미 백업했다). manifest.json 은 ${o.tile} 항목(name·copy)만 필요할 때 갱신하고 _order 등 다른 키는 그대로 둔다. 한 글자씩 오타 검수. 끝나면 마지막 줄에 '완료: 타일 1장'.`;
   },
