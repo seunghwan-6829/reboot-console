@@ -26,7 +26,7 @@ process.on("unhandledRejection", e => logErr(e));
 
 const APP_DIR = path.join(__dirname, "app");
 const IMG = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".avif", ".heic", ".heif"]);
-const SAVE_OK = new Set(["brief.json", "order.json", "review.json", "suggest.json", "tiles/manifest.json", "project.json", "plan.json", "product/approved.json", "feedback.json"]);
+const SAVE_OK = new Set(["brief.json", "order.json", "review.json", "suggest.json", "tiles/manifest.json", "project.json", "plan.json", "product/approved.json", "feedback.json", "ref.json"]);
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon", ".svg": "image/svg+xml",
   ".webmanifest": "application/manifest+json", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/markdown; charset=utf-8" };
@@ -531,6 +531,19 @@ const PROMPTS = {
     } catch (e) {}
     return out.length ? `[최근 프로젝트 톤앤매너 — 이것들과 겹치지 않게]\n${out.join("\n")}` : "";
   },
+  /* 경쟁사 레이아웃 참고(토글 켜짐일 때만) — 구조만 따르고 문구·사진·로고는 가져오지 않는다 */
+  refLayout(n) {
+    const r = readJson(path.join(ROOT, n, "ref.json"));
+    if (!r || !r.useLayout || !Array.isArray(r.layout) || !r.layout.length) return "";
+    const rows = r.layout.map(x => `- ${x.order}. ${x.role}${x.section ? " (→ " + x.section + ")" : ""}${x.ratio ? " · " + x.ratio : ""}: ${x.composition}${x.text ? " / 글자: " + x.text : ""}${x.elements ? " / 요소: " + x.elements : ""}${x.shot ? " [ref/" + x.shot + "]" : ""}`).join("\n");
+    return `[경쟁사 레이아웃 참고 — 사용자가 켬]
+경쟁사 상세페이지의 레이아웃 구조를 비슷하게 따라 만든다. ${r.system ? "레이아웃 시스템: " + r.system : ""}
+${rows}
+- 우리 섹션마다 역할이 같은 위 구간의 구도·요소 배치·정보 위계·비율을 따른다. 필요하면 ${n}/ref/ 의 해당 캡처를 Read 로 보고 구조를 확인한다.
+- 캡처를 image_references 로 넣지 않는다(사진·글자가 그대로 복제될 위험). 구조를 글로 옮겨 생성 프롬프트에 쓴다.
+- 경쟁사의 문구·사진·로고·브랜드명·고유 일러스트·브랜드 색은 절대 가져오지 않는다. 채우는 것은 우리 카피·우리 제품 이미지·우리 아트 디렉션 팔레트다. 아트 디렉션(6-8)·섹션마다 새 이미지(6-7)·빈 여백 금지·문제/해결 풍성(6-9) 규칙은 그대로 지킨다.
+- 기획안 표에 섹션마다 "참고 레이아웃: 경쟁사 N번 구간" 을 적는다.`;
+  },
   /* 섹션 이미지 · 톤앤매너 · 비율 규칙 (README 6-7·6-8·6-9 요약) */
   design(n) {
     return `[디자인 필수 규칙 — README 6-7·6-8·6-9]
@@ -550,12 +563,14 @@ ${PROMPTS.recentStyles(n)}`;
   make: (n, o) => `${MARK("make")}
 ${n} 만들어줘. 먼저 README.md 를 읽고 그 규칙(6절 기술 규칙 — 특히 6-4 제품 무왜곡, 6-7 섹션마다 새 이미지, 6-8 아트 디렉션, 6-9 비율 — 와 8절 절대 금지)을 그대로 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고 기획안(${n}/기획안.md: 아트 디렉션 + 섹션별 카피·비주얼·비율 표) → Higgsfield gpt_image_2_5 로 타일 생성 → 한 글자씩 오타 검수 → ${n}/tiles/NN.png 와 tiles/manifest.json(name·copy·ratio) 저장까지 끝낸다. ${PROMPTS.photo(o.photoMode)}
 ${PROMPTS.design(n)}
+${PROMPTS.refLayout(n)}
 ${PROMPTS.extras(n)}
 기존 tiles/ 파일은 콘솔이 tiles/_history 에 이미 백업했으니 덮어써도 된다. 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓴다. 질문이 있으면 멈추지 말고 가장 안전한 쪽으로 진행하고 기획안에 【확인】 으로 남긴다. 끝나면 마지막 줄에 '완료: 타일 N장' 이라고 답한다.`,
   plan: (n, o) => `${MARK("plan")}
 ${n} 의 기획안만 먼저 짜줘. 이번에는 이미지를 만들지 않는다(Higgsfield 호출 금지). 먼저 README.md 를 읽고 카피·섹션 규칙과 8절 절대 금지를 따른다. ${n}/order.json 의 브리프·사진 분석·페이지 구성을 읽고, ${n} 폴더의 제품 사진(최상위 이미지 파일)을 Read 로 한 번에 모두 본 뒤 ${n}/기획안.md 와 ${n}/plan.json 을 쓴다.
 plan.json 형식(JSON 하나, 다른 키 금지): {"art":"아트 디렉션 요약","tiles":[{"n":"01","name":"섹션 이름","goal":"이 장의 역할 한 줄","head":"메인 카피","sub":"서브 카피","body":"본문·보조 문구(여러 줄은 \\n)","visual":"이 카피에 맞는 구체적 장면 1~2문장(다른 섹션과 겹치지 않게)","ratio":"9:16|4:5|3:4|1:1|16:9","product":true}],"confirm":["고객에게 확인이 필요한 사항"]}
 ${PROMPTS.design(n)}
+${PROMPTS.refLayout(n)}
 n 은 01부터 두 자리. 섹션 순서는 order.json 의 페이지 구성을 따른다. 수치·인증·후기·마감은 order.json 에 있는 실제 값만 쓰고, 없으면 해당 문구 자리에 【실제 데이터】 라고 쓴다. ${o.note ? "사용자 요청: " + o.note : ""} 끝나면 마지막 줄에 '완료: 기획 N장' 이라고 답한다.`,
   tile: (n, o) => {
     const list = tileFiles(n).map(t => t.stem), i = list.indexOf(o.tile), prev = list[i - 1] || "", next = list[i + 1] || "";
@@ -1173,7 +1188,8 @@ async function captureUrl(url, dir, idx) {
   } finally { try { w.destroy(); } catch (e) {} }
   return { files, text };
 }
-async function startRef(name, urls, note) {
+async function startRef(name, urls, note, useLayout) {
+  useLayout = !!useLayout;
   urls = (Array.isArray(urls) ? urls : []).map(u => String(u || "").trim()).filter(u => /^https?:\/\/[^\s]+$/i.test(u)).slice(0, 3);
   const dir = path.join(ROOT, name, "ref"); fs.mkdirSync(dir, { recursive: true });
   const uploaded = listImages(dir, "").filter(i => !/^web\d+_/.test(i.name)).map(i => path.join(dir, i.name));
@@ -1202,12 +1218,16 @@ ${texts.join("\n\n").slice(0, 14000) || "(없음)"}
 우리가 쓸 수 있는 섹션 id: ${CATALOG_IDS.join(", ")}
 규칙: 경쟁사 문구·이미지를 그대로 베끼자고 하지 말 것(구성·흐름·설득 방식만 참고). 캡처에 없는 내용을 지어내지 말 것. 한국어, 짧고 실행 가능하게.
 반드시 JSON 객체 하나만 출력(설명·코드펜스 금지):
-{"summary":"경쟁사 페이지 흐름과 설득 전략 2~3문장","flow":["경쟁사 섹션 흐름을 순서대로 짧게"],"strengths":["잘한 점 3~5"],"gaps":["빈틈·약점 2~4 — 우리가 파고들 곳"],"ideas":["우리 페이지에 적용할 구성·연출 아이디어 3~5"],"differ":["차별화 메시지 2~3"],"sections":["추천 섹션 id"],"avoid":["피해야 할 것 1~3"]}`;
-    jobClaude(j, prompt, { turns: 10, tools: ["Read"], stage: `AI 가 경쟁사 페이지 ${imgs.length}장을 읽는 중` }, data => {
-      const out = Object.assign({ at: new Date().toISOString(), urls, shots: imgs.map(p => path.basename(p)) }, data);
+{"summary":"경쟁사 페이지 흐름과 설득 전략 2~3문장","flow":["경쟁사 섹션 흐름을 순서대로 짧게"],"strengths":["잘한 점 3~5"],"gaps":["빈틈·약점 2~4 — 우리가 파고들 곳"],"ideas":["우리 페이지에 적용할 구성·연출 아이디어 3~5"],"differ":["차별화 메시지 2~3"],"sections":["추천 섹션 id"],"avoid":["피해야 할 것 1~3"]${useLayout ? `,"system":"레이아웃 시스템 2~3문장 — 좌우 여백, 그리드(1단/2단/카드), 사진과 글의 비중, 밝은 장·어두운 장 리듬, 헤드/서브/본문 크기 위계, 강조 방식(하이라이트·배지·밑줄)","layout":[{"order":1,"role":"이 구간의 역할(인트로·문제·해결·포인트·비교·스펙·후기·CTA 등)","section":"가장 가까운 우리 섹션 id","ratio":"이 구간을 한 장으로 만들면 알맞은 비율 9:16|4:5|3:4|1:1|16:9","composition":"화면을 위에서 아래로: 무엇이 어디에 얼마나 크게(예: 상단 40% 풀블리드 사용 사진, 그 아래 흰 배경에 헤드 2줄 가운데 정렬, 하단 3칸 아이콘 카드)","text":"글자 배치·정렬·크기 위계","elements":"배지·아이콘·표·말풍선·화살표·번호 같은 요소","shot":"이 구간이 보이는 캡처 파일명"}]` : ""}}
+${useLayout ? `
+[레이아웃 분석 — 켜짐] 캡처를 위에서 아래로 훑으며 경쟁사 페이지를 구간(섹션)으로 나누고, 구간마다 구도·요소 배치·정보 위계를 위 layout 배열에 순서대로 적어라(최대 16개). 구조만 기록하고 문구·사진 내용·브랜드명은 적지 않는다.` : ""}`;
+    jobClaude(j, prompt, { turns: useLayout ? 14 : 10, tools: ["Read"], stage: `AI 가 경쟁사 페이지 ${imgs.length}장을 읽는 중${useLayout ? " (레이아웃까지)" : ""}` }, data => {
+      const out = Object.assign({ at: new Date().toISOString(), urls, shots: imgs.map(p => path.basename(p)), useLayout }, data);
+      if (!useLayout) { delete out.layout; delete out.system; }
+      else out.layout = (Array.isArray(data.layout) ? data.layout : []).slice(0, 16).map((x, i) => ({ order: +x.order || i + 1, role: String(x.role || ""), section: CATALOG_IDS.includes(x.section) ? x.section : "", ratio: /^(9:16|4:5|3:4|1:1|16:9)$/.test(x.ratio) ? x.ratio : "", composition: String(x.composition || ""), text: String(x.text || ""), elements: String(x.elements || ""), shot: String(x.shot || "").split(/[\\/]/).pop() }));
       out.sections = (Array.isArray(data.sections) ? data.sections : []).filter(id => CATALOG_IDS.includes(id));
       fs.writeFileSync(path.join(ROOT, name, "ref.json"), JSON.stringify(out, null, 2), "utf8");
-      actLog(name, "ai", `경쟁사 분석 — 캡처 ${imgs.length}장${urls.length ? " · URL " + urls.length : ""}`);
+      actLog(name, "ai", `경쟁사 분석${useLayout ? "(레이아웃 포함)" : ""} — 캡처 ${imgs.length}장${urls.length ? " · URL " + urls.length : ""}`);
       return out;
     });
   })().catch(e => { j.running = false; j.error = e.message; logErr(e); });
@@ -1385,7 +1405,7 @@ async function handle(req, res) {
     }
     if (p === "/local/typo" && req.method === "POST") { const n = q.get("name") || ""; if (!needProj(res, n)) return; return json(res, 200, await startTypo(n)); }
     if (p === "/local/feedback" && req.method === "POST") { const n = q.get("name") || ""; if (!needProj(res, n)) return; const b = await bodyJson(req, 300000); return json(res, 200, await startFeedback(n, b.text)); }
-    if (p === "/local/ref" && req.method === "POST") { const n = q.get("name") || ""; if (!needProj(res, n)) return; const b = await bodyJson(req); return json(res, 200, await startRef(n, b.urls, b.note)); }
+    if (p === "/local/ref" && req.method === "POST") { const n = q.get("name") || ""; if (!needProj(res, n)) return; const b = await bodyJson(req); return json(res, 200, await startRef(n, b.urls, b.note, b.layout)); }
     if (p === "/local/psd" && req.method === "POST") { const n = q.get("name") || ""; if (!needProj(res, n)) return; const st = (q.get("tiles") || "").split(",").filter(Boolean); return json(res, 200, startPsd(n, st.length ? st : null)); }
     if (p === "/local/tile-restore" && req.method === "POST") {
       const n = q.get("name") || ""; if (!needProj(res, n)) return;

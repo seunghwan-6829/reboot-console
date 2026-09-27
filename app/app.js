@@ -232,7 +232,7 @@ const Local = {
   ocr(name, tiles) { return this._j(`/local/ocr?name=${encodeURIComponent(name)}${tiles && tiles.length ? "&tiles=" + encodeURIComponent(tiles.join(",")) : ""}`); },
   typo(name) { return this._j("/local/typo?name=" + encodeURIComponent(name), { method: "POST" }); },
   feedback(name, text) { return this._post("/local/feedback?name=" + encodeURIComponent(name), { text }); },
-  ref(name, urls, note) { return this._post("/local/ref?name=" + encodeURIComponent(name), { urls, note }); },
+  ref(name, urls, note, layout) { return this._post("/local/ref?name=" + encodeURIComponent(name), { urls, note, layout: !!layout }); },
   psd(name, tiles) { return this._j(`/local/psd?name=${encodeURIComponent(name)}${tiles && tiles.length ? "&tiles=" + encodeURIComponent(tiles.join(",")) : ""}`, { method: "POST" }); },
   restore(name, tile, file) { return this._j(`/local/tile-restore?name=${encodeURIComponent(name)}&tile=${encodeURIComponent(tile)}&file=${encodeURIComponent(file)}`, { method: "POST" }); }
 };
@@ -1771,14 +1771,27 @@ const Ref = {
     return `<div class="refc"><div class="pcut-h">${svg("globe")}<b>경쟁사 상세페이지 참고</b><span class="tag n">선택</span></div>
       <p class="hint" style="margin:4px 0 8px">같은 카테고리 상위 상품 페이지 URL 을 넣거나(최대 3개) 캡처를 올리면, 구성·설득 흐름·빈틈을 분석해 우리 페이지 구성에 반영합니다. 문구·이미지는 베끼지 않습니다.</p>
       <div class="rfu">${[1, 2, 3].map(i => `<input type="text" data-k="ref.u${i}" data-notab value="${esc(b["u" + i] || "")}" placeholder="https:// 경쟁사 상품 페이지 ${i}">`).join("")}</div>
+      <label class="rlt${b.useLayout ? " on" : ""}"><span>${svg("layers")}<b>레이아웃도 참고</b><small>켜면 경쟁사 페이지를 구간별로 나눠 구도·요소 배치·비율까지 분석하고, 제작할 때 그 구조를 비슷하게 따라 만듭니다. 문구·사진·로고는 가져오지 않고 우리 카피·톤으로 채웁니다.</small></span><input type="checkbox" class="sw" data-ref="lt"${b.useLayout ? " checked" : ""}></label>
       <div class="rfs">${refs.map(i => `<div class="rfsh"><img src="${i.url}" alt="" data-lb="${i.url}"><button class="shx" data-ref="del" data-f="${esc(i.name)}" title="빼기">${svg("x")}</button></div>`).join("")}
         <button class="btn sm" data-ref="add">${svg("plus")} 캡처 올리기</button><button class="btn sm ghost" data-ref="paste">${svg("copy")} 붙여넣기</button></div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:8px"><button class="btn sm pri" data-ref="run"${this.running ? " disabled" : ""}>${this.running ? svg("refresh", "spin") + " 분석 중…" : svg("sparkles") + " 분석하기"}</button><span class="hint" style="margin:0">${this.running ? "페이지를 열어 캡처하고 AI 가 읽는 중입니다 (1~2분)" : "로그인이 필요한 페이지는 캡처를 올려주세요"}</span></div>
       ${r && r.summary ? `<div class="rfr"><p><b>요약</b> ${esc(r.summary)}</p>${list("경쟁사 흐름", r.flow)}${list("잘한 점", r.strengths)}${list("빈틈 — 우리가 파고들 곳", r.gaps)}${list("우리 페이지에 적용할 아이디어", r.ideas)}${list("차별화 메시지", r.differ)}${list("피할 것", r.avoid)}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${(r.sections || []).length ? `<button class="btn sm" data-ref="sec">${svg("check")} 추천 섹션 구성에 반영 (${r.sections.map(id => (catOf(id) || {}).label || id).join(", ")})</button>` : ""}<button class="btn sm" data-ref="idea">${svg("edit")} 아이디어를 요청사항에 넣기</button></div>
-        <p class="hint" style="margin:6px 0 0">${fmtT(Date.parse(r.at))} 분석 · 제작 시 지시서에 함께 들어갑니다.</p></div>` : ""}</div>`;
+        ${r.useLayout && (r.layout || []).length ? `<details class="rlay" open><summary>${svg("layers")} 레이아웃 분석 ${r.layout.length}구간 <span class="hint" style="margin:0">— 제작 때 이 구조를 따릅니다</span></summary>${r.system ? `<p class="rlsys">${esc(r.system)}</p>` : ""}<ol>${r.layout.map(x => `<li><b>${esc(x.role || "구간")}</b>${x.ratio ? `<i>${esc(x.ratio)}</i>` : ""}${x.section && catOf(x.section) ? `<em>→ ${esc(catOf(x.section).label)}</em>` : ""}<small>${esc(x.composition)}${x.elements ? " · " + esc(x.elements) : ""}</small>${x.shot ? `<button class="btn sm ghost" data-lb="${esc((FS.refs.find(i => i.name === x.shot) || {}).url || "")}" ${(FS.refs.find(i => i.name === x.shot)) ? "" : "hidden"}>캡처</button>` : ""}</li>`).join("")}</ol></details>` : ""}
+        <p class="hint" style="margin:6px 0 0">${fmtT(Date.parse(r.at))} 분석${r.useLayout ? " (레이아웃 포함)" : ""} · 제작 시 지시서에 함께 들어갑니다.</p></div>` : ""}</div>`;
   },
   paint() { const b = $("#refbox"); if (b) b.innerHTML = this.box(); },
+  /* 레이아웃 참고 토글: 브리프에 기억 + ref.json 에도 반영(제작 지시가 이걸 본다). 켰는데 레이아웃 분석이 없으면 다시 분석 */
+  async toggleLayout() {
+    const cb = $('[data-ref="lt"]'), on = !!(cb && cb.checked);
+    App.brief.ref = App.brief.ref || {}; App.brief.ref.useLayout = on; App.saveBrief(); ACT.saveBrief(true);
+    const r = FS.ref;
+    if (r && r.summary) {
+      if (on && !(r.layout || []).length) { this.paint(); if (await UI.confirm("레이아웃까지 다시 분석할까요?", "지금 분석 결과에는 레이아웃이 없습니다. 같은 경쟁사 페이지를 구간별 구도·요소 배치까지 다시 분석합니다 (1~2분).", { ok: "다시 분석", tone: "b" })) return this.run(); return; }
+      r.useLayout = on; try { await Local.save(FS.name, "ref.json", JSON.stringify(r, null, 2)); } catch (e) { UI.toast(e.message, "w"); }
+    }
+    this.paint(); UI.toast(on ? "레이아웃 참고를 켰습니다 — 제작할 때 경쟁사 구조를 따릅니다" : "레이아웃 참고를 껐습니다", "o");
+  },
   async act(k, f) {
     if (k === "add") { let inp = $("#refPick"); if (!inp) { inp = el("input"); inp.type = "file"; inp.id = "refPick"; inp.multiple = true; inp.accept = "image/*"; inp.hidden = true; document.body.appendChild(inp); } inp.value = ""; inp.onchange = async () => { let n = 0; for (const fl of inp.files) { try { await Local.addRef(FS.name, fl.name, fl); n++; } catch (e) { UI.toast(e.message, "w"); } } if (n) { await reloadProject(); this.paint(); UI.toast(`캡처 ${n}장 올렸습니다`, "o"); } }; inp.click(); return; }
     if (k === "paste") { try { const j = await Local.pasteClip(FS.name, "ref"); await reloadProject(); this.paint(); UI.toast(`캡처 ${j.files.length}장 붙여넣었습니다`, "o"); } catch (e) { UI.toast(/이미지가 없습니다/.test(e.message) ? "클립보드에 이미지가 없습니다" : e.message, "w"); } return; }
@@ -1786,12 +1799,13 @@ const Ref = {
     if (k === "sec") { const r = FS.ref || {}; const cur = new Set(layoutSel()); (r.sections || []).forEach(id => { if (catOf(id)) cur.add(id); }); App.brief.layout = { sections: CATALOG.filter(c => cur.has(c.id)).map(c => c.id) }; App.saveBrief(); ACT.saveBrief(true); go("brief"); setTimeout(() => openCard("layout", true), 60); return UI.toast("추천 섹션을 구성에 넣었습니다", "o"); }
     if (k === "idea") { const r = FS.ref || {}; const add = [...(r.ideas || []).map(x => "· " + x), ...(r.differ || []).map(x => "· 차별화: " + x)].join("\n"); if (!add) return; App.brief.req = App.brief.req || {}; const cur = String(App.brief.req.etc || ""); if (cur.includes(add.slice(0, 30))) return UI.toast("이미 넣었습니다"); App.brief.req.etc = (cur.trim() ? cur.trim() + "\n" : "") + "[경쟁사 분석에서]\n" + add; App.saveBrief(); ACT.saveBrief(true); go("brief"); setTimeout(() => openCard("req", true), 60); return UI.toast("요청사항에 넣었습니다 — 필요 없는 줄은 지우세요", "o"); }
     if (k === "run") return this.run();
+    if (k === "lt") return this.toggleLayout();
   },
   async run() {
     if (this.running) return;
     const b = App.brief.ref || {}, urls = [b.u1, b.u2, b.u3].map(x => String(x || "").trim()).filter(Boolean);
     const bad = urls.filter(u => !/^https?:\/\//i.test(u)); if (bad.length) return UI.toast("URL 은 https:// 로 시작해야 합니다", "w");
-    try { await Local.ref(FS.name, urls, ""); } catch (e) { return UI.alert("분석을 시작하지 못했습니다", esc(e.message), "d"); }
+    try { await Local.ref(FS.name, urls, "", !!b.useLayout); } catch (e) { return UI.alert("분석을 시작하지 못했습니다", esc(e.message), "d"); }
     const name = FS.name; this.running = true; this.paint();
     const j = await waitJob("ref", name);
     this.running = false;
@@ -2158,7 +2172,7 @@ function buildOrder() {
   const blocked = sel.filter(id => (id === "reviews" && !hasReviews) || (id === "awards" && !hasAwards));
   if (blocked.length) L.push("  ⚠ 자료 없음 → 제작 보류: " + blocked.map(id => catOf(id).label).join(", "));
   L.push("");
-  if (FS.ref && FS.ref.summary) { L.push("■ 경쟁사 참고 (구성·흐름만 참고, 문구·이미지 복제 금지)", "  " + FS.ref.summary); (FS.ref.ideas || []).forEach(x => L.push("  · 적용: " + x)); (FS.ref.differ || []).forEach(x => L.push("  · 차별화: " + x)); (FS.ref.avoid || []).forEach(x => L.push("  · 피할 것: " + x)); L.push(""); }
+  if (FS.ref && FS.ref.summary) { L.push("■ 경쟁사 참고 (구성·흐름만 참고, 문구·이미지 복제 금지)", "  " + FS.ref.summary); (FS.ref.ideas || []).forEach(x => L.push("  · 적용: " + x)); (FS.ref.differ || []).forEach(x => L.push("  · 차별화: " + x)); (FS.ref.avoid || []).forEach(x => L.push("  · 피할 것: " + x)); if (FS.ref.useLayout && (FS.ref.layout || []).length) { L.push("  ■ 레이아웃 참고 켜짐 — 아래 구조를 따르되 문구·사진·로고는 가져오지 않음"); FS.ref.layout.forEach(x => L.push(`    ${x.order}. ${x.role}${x.ratio ? " · " + x.ratio : ""}: ${x.composition}`)); } L.push(""); }
   if (s) { L.push("■ 사진 분석", `  ${s.total}장 · 평균 긴 변 ${s.avgLong}px · 누끼 적합 ${s.cuttable}장 · 포인트 컬러 ${s.accent}`); if (s.low) L.push(`  ⚠ 해상도 부족 ${s.low}장 — ${s.lowNames.join(", ")} → 업스케일 후 합성`); L.push(""); }
   if (App.tiles.length) {
     const todo = []; let regions = 0;
