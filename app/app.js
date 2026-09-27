@@ -194,7 +194,7 @@ const Local = {
       this.ok = !!(j && j.ok); this.desktop = !!(j && j.desktop); this.root = (j && j.root) || ""; this.version = (j && j.version) || ""; } catch (e) { this.ok = false; }
     return this.ok;
   },
-  async _j(url, opt) { const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {})); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const err = new Error(j.error || `요청 실패 (${r.status})`); if (j.needLogin) { err.needLogin = true; setTimeout(() => Login.prompt(), 0); } throw err; } return j; },
+  async _j(url, opt) { const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {})); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const err = new Error(j.error || `요청 실패 (${r.status})`); if (j.needLogin) { err.needLogin = true; setTimeout(() => Login.prompt(), 0); } else if (j.needHf) { err.needHf = true; setTimeout(() => HF.prompt(), 0); } throw err; } return j; },
   _post(url, body) { return this._j(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); },
   async projects(force) { if (this._projects && !force) return this._projects; return (this._projects = (await this._j("/local/projects")).projects || []); },
   project(name) { return this._j("/local/project?name=" + encodeURIComponent(name)); },
@@ -721,7 +721,6 @@ const Brief = { title: "브리프", render(v) {
   bumpProgress();
 
   v.addEventListener("click", e => {
-    const ct = e.target.closest("[data-cut]"); if (ct) { Cut.act(ct.dataset.cut, ct.dataset.f); return; }
     const rf = e.target.closest("[data-ref]"); if (rf) { Ref.act(rf.dataset.ref, rf.dataset.f); return; }
     const lbx = e.target.closest("[data-lb]"); if (lbx) { UI.lightbox(lbx.dataset.lb); return; }
     const ap = e.target.closest("[data-apply]"); if (ap) { applySection(ap.dataset.apply); return; }
@@ -809,7 +808,6 @@ const BODY = {
         <dt>누끼 적합</dt><dd>${s.cuttable}장</dd>
         <dt>추출 포인트 컬러</dt><dd><i class="sw" style="background:${s.accent}"></i>${s.accent}</dd></dl>
       <div class="aisug" id="aisug">${Suggest.box()}</div>
-      <div id="pcut">${Cut.box()}</div>
       <div class="shots">${FS.analysis.map(shotCard).join("")}</div>`),
   product: (g, eg) => `<p class="hint">이것만 있어도 기획안 초안은 나옵니다.</p>
     <div class="row2"><div class="fld"><label>상품명</label><input type="text" data-k="product.name" value="${esc(g("product", "name"))}" placeholder="${esc(eg.name)}"></div>
@@ -1266,57 +1264,95 @@ const Suggest = {
   act(k) { if (k === "run") this.run(); else if (k === "fill") this.fill(); else if (k === "login") Login.prompt().then(ok => { if (ok) { this.err = ""; this.paint(); } }); }
 };
 
-/* ── AI 실행 패널: 프로젝트별 실행 · 단계 워드 스와이프 · 눈금 진행바 · 타일 스트립 · 자동/수동 이어하기 ── */
+/* ── AI 실행 패널 v2: 진행 링 · 흐르는 배경 · 단계 타임라인 · 초 단위 경과 · 완료 폭죽 · 실패 원인 카드 ── */
 const FUN = { make: ["카피 문장을 고르는 중", "색 조합을 맞추는 중", "제품 사진을 다듬는 중", "여백을 계산하는 중", "글자 하나하나 검수하는 중", "섹션 순서를 정리하는 중", "고객이 멈출 지점을 만드는 중"], revise: ["표시한 영역을 확인하는 중", "톤을 그대로 유지하는 중", "고친 자리만 다시 그리는 중", "글자를 대조하는 중"],
-  tile: ["앞뒤 장 톤을 맞추는 중", "이 장만 다시 그리는 중", "글자를 대조하는 중"], productcut: ["라벨 글자를 한 자씩 옮기는 중", "조명을 다듬는 중", "원본과 나란히 대조하는 중"], plan: ["섹션 흐름을 짜는 중", "카피를 다듬는 중"] };
+  tile: ["앞뒤 장 톤을 맞추는 중", "이 장만 다시 그리는 중", "글자를 대조하는 중"], plan: ["섹션 흐름을 짜는 중", "카피를 다듬는 중"] };
+const RING_C = 2 * Math.PI * 52;
 const RunUI = {
-  el: null, timer: null, next: 0, rid: 0, open: false, min: false, logOpen: false, lastKey: "", name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null, last: null,
+  el: null, timer: null, next: 0, rid: 0, open: false, min: false, logOpen: false, name: "", mode: "make", seen: new Set(), funT: null, funI: 0, tileT: null, clockT: null, last: null, t0: 0,
   ensure() {
     if (this.el) return this.el;
-    this.el = el("div", "runp", `
-      <div class="rh"><span class="rdot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rel" id="runEl"></span><button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기 (작업은 계속)">${svg("x")}</button></div>
-      <div class="rbody">
-        <div class="rstage"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rpct"><b id="runPct">0</b><i>%</i></div></div>
-        <div class="rticks" id="runTicks"><span class="rshine"></span></div>
-        <div class="rchips" id="runChips"></div>
-        <div class="rfun" id="runFun"></div>
-        <div class="rlast" id="runLast">시작하는 중…</div>
-        <div class="rtiles" id="runTiles"></div>
+    this.el = el("div", "rp", `
+      <div class="rp-bg"><i></i><i></i><i></i></div>
+      <div class="rp-h"><span class="rp-dot"></span><b id="runT">AI 작업</b><span class="sp"></span><span class="rp-el" id="runEl">0:00</span>
+        <button class="ib" id="runLog" title="로그">${svg("doc")}</button><button class="ib" id="runMin" title="접기">${svg("chev")}</button><button class="ib" id="runX" title="닫기 (작업은 계속)">${svg("x")}</button></div>
+      <div class="rp-main">
+        <div class="rp-ring"><svg viewBox="0 0 120 120"><defs><linearGradient id="rpGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#F8480F"/></linearGradient></defs>
+          <circle class="trk" cx="60" cy="60" r="52"/><circle class="arc" id="rpArc" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}"/><circle class="comet" cx="60" cy="60" r="52" stroke-dasharray="26 ${RING_C}"/>
+          <path class="ok" d="M40 61 L54 75 L81 46"/><path class="no1" d="M45 45 L75 75"/><path class="no2" d="M75 45 L45 75"/></svg>
+          <div class="rp-pct"><b id="runPct">0</b><i>%</i></div></div>
+        <div class="rp-info"><div class="rsw" id="runSw"><div class="rsword" id="runWord">준비</div></div><div class="rp-sub" id="runLast">시작하는 중…</div><div class="rfun" id="runFun"></div></div>
       </div>
+      <div class="rp-steps" id="runChips"></div>
+      <div class="rp-err" id="runErr" hidden></div>
+      <div class="rtiles" id="runTiles"></div>
       <div class="rl" id="runL" hidden></div>
-      <div class="rf"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm" id="runResume" hidden>${svg("refresh")} 이어서 하기</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>`);
+      <div class="rp-f"><span id="runS" class="hint"></span><span class="sp"></span><button class="btn sm dgr" id="runStop">${svg("stop")} 중단</button><button class="btn sm" id="runResume" hidden>${svg("refresh")} 이어서 하기</button><button class="btn sm pri" id="runGo" hidden>${svg("check")} 검수로</button></div>
+      <div class="rp-fx" id="runFx"></div>`);
     document.body.appendChild(this.el);
-    const T = $("#runTicks", this.el); for (let i = 0; i < 44; i++) T.appendChild(el("i"));
     $("#runMin", this.el).onclick = () => { this.min = !this.min; this.el.classList.toggle("min", this.min); };
-    $("#runLog", this.el).onclick = () => { this.logOpen = !this.logOpen; $("#runL", this.el).hidden = !this.logOpen; this.el.classList.toggle("logon", this.logOpen); };
+    $("#runLog", this.el).onclick = () => this.setLog(!this.logOpen);
     $("#runX", this.el).onclick = () => this.hide();
     $("#runStop", this.el).onclick = async () => { if (!(await UI.confirm("AI 작업을 중단할까요?", "지금까지 만든 파일은 남습니다. 나중에 <b>이어서 하기</b>로 남은 것만 이어서 할 수 있습니다.", { ok: "중단", danger: true }))) return; try { await Local.runStop(this.name); } catch (e) { UI.toast(e.message, "w"); } };
-    $("#runResume", this.el).onclick = async () => { const nm = this.name, md = this.mode; try { await Local.run(nm, "resume"); this.show(`이어서 하기 — ${nm}`, nm, md); UI.toast("이어서 진행합니다 — 이미 만든 파일은 그대로 둡니다", "o"); } catch (e) { UI.alert("이어서 하지 못했습니다", esc(e.message), "d"); } };
-    $("#runGo", this.el).onclick = async () => { const j = this.last || {}; this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); if (j.mode === "productcut") { go("brief"); setTimeout(() => openCard("photos", true), 80); return; } App.curTile = j.newId || j.tile || null; go("review"); };
+    $("#runResume", this.el).onclick = () => this.resume();
+    $("#runGo", this.el).onclick = async () => { const j = this.last || {}; this.hide(); if (FS.name !== this.name) await FS.load(this.name, true); App.curTile = j.newId || j.tile || null; go("review"); };
+    $("#runErr", this.el).onclick = async e => { const b = e.target.closest("[data-fix]"); if (!b) return; const k = b.dataset.fix;
+      if (k === "login") { if (await Login.prompt()) this.resume(); }
+      else if (k === "hf") { if (await HF.prompt()) this.resume(); }
+      else if (k === "resume") this.resume();
+      else if (k === "log") this.setLog(true); };
     return this.el;
   },
+  setLog(on) { this.logOpen = on; $("#runL", this.el).hidden = !on; this.el.classList.toggle("logon", on); if (on) { const L = $("#runL", this.el); L.scrollTop = L.scrollHeight; } },
+  async resume() { const nm = this.name, md = this.mode; try { await Local.run(nm, "resume"); this.show(`이어서 하기 — ${nm}`, nm, md); UI.toast("이어서 진행합니다 — 이미 만든 파일은 그대로 둡니다", "o"); } catch (e) { if (!e.needLogin && !e.needHf) UI.alert("이어서 하지 못했습니다", esc(e.message), "d"); } },
   show(title, name, mode) {
-    this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.lastKey = ""; this.seen = new Set(); this.funI = 0; this.rid = 0; this.last = null;
-    this.el.classList.add("on", "live"); this.el.classList.remove("min", "done", "fail");
-    $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runGo", this.el).hidden = true; $("#runResume", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…";
-    this.next = 0; this.poll(); this.fun(); this.tiles();
+    this.ensure(); this.name = name || FS.name; this.mode = mode || "make"; this.open = true; this.min = false; this.seen = new Set(); this.funI = 0; this.rid = 0; this.last = null; this.t0 = Date.now();
+    this.el.classList.remove("min", "done", "fail", "on"); void this.el.offsetWidth; this.el.classList.add("on", "live");
+    $("#runT", this.el).textContent = title || "AI 작업"; $("#runL", this.el).innerHTML = ""; $("#runTiles", this.el).innerHTML = ""; $("#runTiles", this.el).classList.remove("has"); $("#runErr", this.el).hidden = true; $("#runFx", this.el).innerHTML = "";
+    $("#runGo", this.el).hidden = true; $("#runResume", this.el).hidden = true; $("#runStop", this.el).hidden = false; $("#runLast", this.el).textContent = "시작하는 중…"; this.setLog(false);
+    this.setRing(0); $("#runPct", this.el).textContent = "0"; $("#runChips", this.el).innerHTML = ""; delete $("#runChips", this.el).dataset.key;
+    this.next = 0; this.poll(); this.fun(); this.tiles(); this.clock();
   },
-  hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null; },
-  fun() { clearInterval(this.funT); const list = FUN[this.mode] || FUN.make; const F = $("#runFun", this.el); const step = () => { const n = el("span", "in", esc(list[this.funI++ % list.length])); F.innerHTML = ""; F.appendChild(n); }; step(); this.funT = setInterval(step, 4200); },
+  hide() { this.open = false; if (this.el) this.el.classList.remove("on", "live"); [this.timer, this.funT, this.tileT, this.clockT].forEach(clearInterval); this.timer = this.funT = this.tileT = this.clockT = null; },
+  clock() { clearInterval(this.clockT); const E = $("#runEl", this.el); const tick = () => { const s = Math.max(0, Math.round((Date.now() - this.t0) / 1000)); E.textContent = `${Math.floor(s / 60)}:${pad2(s % 60)}${this.last && this.last.resumes ? ` · 이어하기 ${this.last.resumes}` : ""}`; }; tick(); this.clockT = setInterval(tick, 1000); },
+  fun() { clearInterval(this.funT); const list = FUN[this.mode] || FUN.make; const F = $("#runFun", this.el); const step = () => { const n = el("span", "in", esc(list[this.funI++ % list.length])); F.innerHTML = ""; F.appendChild(n); }; step(); this.funT = setInterval(step, 3800); },
+  setRing(pct) { const a = $("#rpArc", this.el); if (a) a.style.strokeDashoffset = String(RING_C * (1 - clamp(pct, 0, 100) / 100)); },
   /* 완성되는 타일을 8초마다 확인해 미니 스트립에 팝인 (바뀐 파일도 다시 뜬다) */
-  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); if (!box) return; const list = this.mode === "productcut" ? (p.cuts || []) : (p.tiles || []).filter(t => !/^_/.test(t.name)); list.forEach(t => { const key = t.name + "@" + t.mtime; if (this.seen.has(key)) return; const first = this.seen.size === 0 && !this.primed; this.seen.add(key); if (first && this.mode !== "make" && this.mode !== "productcut") return; const d = el("div", "rt", `<img src="${t.url}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); this.primed = true; box.classList.toggle("has", box.children.length > 0); }; this.primed = false; tick(); this.tileT = setInterval(tick, 8000); },
+  tiles() { clearInterval(this.tileT); const tick = async () => { let p; try { p = await Local.project(this.name); } catch (e) { return; } const box = $("#runTiles", this.el); if (!box) return; (p.tiles || []).filter(t => !/^_/.test(t.name)).forEach(t => { const key = t.name + "@" + t.mtime; if (this.seen.has(key)) return; const first = !this.primed; this.seen.add(key); if (first && this.mode !== "make") return; const d = el("div", "rt", `<img src="${t.url}" alt=""><span>${esc(t.name.replace(/\.[^.]+$/, ""))}</span>`); box.appendChild(d); box.scrollLeft = box.scrollWidth; }); this.primed = true; box.classList.toggle("has", box.children.length > 0); }; this.primed = false; tick(); this.tileT = setInterval(tick, 8000); },
   paint(j) {
-    const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100);
-    const word = j.pendingResume ? "이어서" : j.done ? (j.exit === 0 ? "완료" : "중단됨") : (idx >= 0 ? st[idx] : "준비");
+    const st = j.stages || [], idx = j.stageIdx, pct = clamp(j.pct || 0, 0, 100), okDone = j.done && j.exit === 0;
+    const word = j.pendingResume ? "이어서 진행" : j.done ? (okDone ? "완료" : j.stopped && !j.needLogin && !j.needHf ? "중단됨" : "멈춤") : (idx >= 0 ? st[idx] : "준비 중");
     const W = $("#runWord", this.el);
-    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); W.removeAttribute("id"); sw.appendChild(nw); nw.id = "runWord"; setTimeout(() => { W.remove(); nw.classList.remove("in"); }, 380); }
+    if (word !== W.textContent) { const sw = $("#runSw", this.el); const nw = el("div", "rsword in", esc(word)); W.classList.add("out"); W.removeAttribute("id"); sw.appendChild(nw); nw.id = "runWord"; setTimeout(() => { W.remove(); nw.classList.remove("in"); }, 420); }
     const P = $("#runPct", this.el); if (P.textContent !== String(pct)) { P.textContent = pct; P.classList.remove("bump"); void P.offsetWidth; P.classList.add("bump"); }
-    const ticks = $$("#runTicks i", this.el), n = Math.round(ticks.length * pct / 100);
-    ticks.forEach((t, k) => { t.classList.toggle("on", k < n); t.classList.toggle("cur", k === n - 1); });
-    $("#runChips", this.el).innerHTML = st.map((nm, k) => `<span class="${k < idx || (j.done && j.exit === 0) ? "past" : k === idx ? "cur" : ""}">${k < idx || (j.done && j.exit === 0) ? svg("check") : ""}${esc(nm)}</span>`).join("");
-    const gen = j.tileTotal ? `${j.mode === "productcut" ? "컷" : "타일"} ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
-    $("#runLast", this.el).innerHTML = j.pendingResume ? "작업이 끊겨서 같은 세션으로 자동으로 이어서 진행합니다…" : j.done ? (j.exit === 0 ? "다 만들었습니다." : j.canResume ? "끝나지 않았습니다. <b>이어서 하기</b>로 만든 것은 두고 남은 것만 진행할 수 있습니다." : "작업이 끝나지 않았습니다. 로그를 확인하세요.") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(j.last)}` : "") : esc(j.last || "…"));
-    const m = Math.round((Date.now() - j.startedAt) / 60000); $("#runEl", this.el).textContent = j.running ? `${m}분${j.resumes ? ` · 이어하기 ${j.resumes}회` : ""}` : "";
+    this.setRing(pct);
+    // 단계 줄은 단계 목록이 바뀔 때만 새로 만들고(등장 애니메이션 1번), 이후엔 상태 클래스만 바꿔 부드럽게 전환
+    const C = $("#runChips", this.el), key = st.join("|");
+    if (C.dataset.key !== key) { C.dataset.key = key; C.innerHTML = st.map((nm, k) => `<div class="st" style="--k:${k}"><span class="nd"></span><em>${esc(nm)}</em></div>`).join("") + `<i class="ln"></i>`; }
+    $$(".st", C).forEach((node, k) => { const s = k < idx || okDone ? "past" : k === idx && !j.done ? "cur" : k === idx ? "stop" : ""; if (node.dataset.s === s) return; node.dataset.s = s; node.className = "st " + s + " chg";
+      $(".nd", node).innerHTML = s === "past" ? svg("check") : s === "cur" ? "<i></i>" : String(k + 1); });
+    const ln = $(".ln", C); if (ln) ln.style.setProperty("--w", (st.length > 1 ? clamp((okDone ? st.length - 1 : Math.max(0, idx)) / (st.length - 1), 0, 1) * 100 : 0) + "%");
+    const gen = j.tileTotal ? `타일 ${j.tileDone}/${j.tileTotal}${j.tileName ? " · " + esc(j.tileName) : ""}` : "";
+    const nice = t => { t = String(t || ""); const m = t.match(/^([\w_]+) — (.*)$/); if (!m) return t; const base = m[2].split(/[\\/]/).pop();
+      const v = /^mcp__higgsfield/.test(m[1]) ? "이미지 만드는 중" : { Read: "보는 중", Write: "쓰는 중", Edit: "고치는 중", MultiEdit: "고치는 중", Bash: "작업하는 중", Glob: "파일 찾는 중", Grep: "내용 찾는 중", WebFetch: "페이지 읽는 중" }[m[1]] || "작업 중";
+      return /^mcp__higgsfield/.test(m[1]) ? v : `${base} ${v}`; };
+    $("#runLast", this.el).innerHTML = j.pendingResume ? "작업이 끊겨 같은 세션으로 자동으로 이어서 진행합니다…" : j.done ? (okDone ? "다 만들었습니다 — 검수로 넘어갑니다" : "아래 안내대로 한 번만 눌러주면 이어서 진행합니다") : (gen ? `<b>${gen}</b>` + (j.last ? ` — ${esc(nice(j.last))}` : "") : esc(nice(j.last) || "…"));
+  },
+  /* 실패 이유를 사람 말로 + 해결 버튼 하나 */
+  errCard(j) {
+    const E = $("#runErr", this.el);
+    let ic = "warn", t = "작업이 멈췄습니다", d = "", btn = "";
+    if (j.needLogin) { ic = "lock"; t = "Claude 로그인이 만료됐습니다"; d = "다시 로그인하면 이미 만든 것은 그대로 두고 이어서 진행합니다."; btn = `<button class="btn sm pri" data-fix="login">${svg("lock")} 다시 로그인</button>`; }
+    else if (j.needHf) { ic = "lock"; t = "Higgsfield 연결이 필요합니다"; d = "이미지 생성 서버와의 연결이 끊겼습니다. 연결하면 바로 이어서 진행합니다."; btn = `<button class="btn sm pri" data-fix="hf">${svg("lock")} Higgsfield 연결</button>`; }
+    else if (j.stopped) { ic = "stop"; t = "중단했습니다"; d = "만든 파일은 그대로 있습니다."; btn = j.canResume ? `<button class="btn sm pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : ""; }
+    else { d = esc(String(j.errText || "").split("\n")[0].slice(0, 180)) || "원인은 로그에서 볼 수 있습니다."; btn = (j.canResume ? `<button class="btn sm pri" data-fix="resume">${svg("refresh")} 이어서 하기</button>` : "") + `<button class="btn sm ghost" data-fix="log">${svg("doc")} 로그 보기</button>`; }
+    E.innerHTML = `<span class="ei">${svg(ic)}</span><div><b>${t}</b><small>${d}</small><div class="eb">${btn}</div></div>`;
+    E.hidden = false;
+  },
+  confetti() {
+    const F = $("#runFx", this.el); F.innerHTML = ""; const cols = ["#F86010", "#FFB020", "#2F6BFF", "#0F9D58", "#E91E63", "#8B5CF6"];
+    for (let i = 0; i < 34; i++) { const s = el("i"); const a = Math.random() * Math.PI * 2, r = 70 + Math.random() * 120; s.style.cssText = `--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r - 40}px;--r:${Math.random() * 720 - 360}deg;--d:${(Math.random() * .25).toFixed(2)}s;background:${cols[i % cols.length]}`; F.appendChild(s); }
+    setTimeout(() => { F.innerHTML = ""; }, 1800);
   },
   async poll() {
     clearInterval(this.timer);
@@ -1324,30 +1360,33 @@ const RunUI = {
       let j; try { j = await Local.runStatus(this.name, this.next, this.rid); } catch (e) { return; }
       const L = $("#runL", this.el);
       if (j.reset || (this.rid && j.runId && j.runId !== this.rid)) { L.innerHTML = ""; this.seen = new Set(); this.primed = false; }
-      if (j.runId) this.rid = j.runId;
+      if (j.runId && j.runId !== this.rid) { this.t0 = j.startedAt || this.t0; this.rid = j.runId; }
       if (j.mode && j.mode !== this.mode) { this.mode = j.mode; this.fun(); }
       (j.lines || []).forEach(ln => { const d = el("div", "ln " + ln.kind, `<i>${new Date(ln.t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</i><span>${esc(ln.text)}</span>`); L.appendChild(d); });
       if ((j.lines || []).length && this.logOpen) L.scrollTop = L.scrollHeight;
       this.next = j.next != null ? j.next : this.next;
       this.last = j; this.paint(j);
       const el2 = $("#runS", this.el);
-      if (j.running) el2.textContent = j.pendingResume ? "자동 이어하기 대기 중" : "실행 중 — 창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
+      if (j.running) el2.textContent = j.pendingResume ? "자동 이어하기 대기 중" : "창을 닫거나 다른 프로젝트를 열어도 계속 돕니다";
       else if (j.done) {
-        clearInterval(this.timer); clearInterval(this.funT); clearInterval(this.tileT); this.timer = this.funT = this.tileT = null;
-        this.el.classList.remove("live"); el2.textContent = j.exit === 0 ? "완료" : "종료됨"; this.el.classList.add(j.exit === 0 ? "done" : "fail");
+        [this.timer, this.funT, this.tileT, this.clockT].forEach(clearInterval); this.timer = this.funT = this.tileT = this.clockT = null;
+        this.el.classList.remove("live"); this.el.classList.add(j.exit === 0 ? "done" : "fail"); el2.textContent = j.exit === 0 ? "완료" : "";
         $("#runStop", this.el).hidden = true; $("#runFun", this.el).innerHTML = "";
-        const go1 = $("#runGo", this.el); go1.hidden = j.exit !== 0; go1.innerHTML = j.mode === "productcut" ? `${svg("eye")} 제품 컷 보기` : `${svg("check")} 검수로`;
-        $("#runResume", this.el).hidden = !(j.exit !== 0 && j.canResume);
+        $("#runGo", this.el).hidden = j.exit !== 0; $("#runResume", this.el).hidden = true;
         Local._projects = null; Usage.load(true); QueueUI.load().then(() => renderSide());
         const same = FS.name === this.name;
         if (j.exit === 0) {
+          this.confetti();
           if (same) {
             await FS.load(FS.name, true); renderSide();
-            if (j.mode === "productcut") { UI.toast("제품 컷이 나왔습니다 — 원본과 나란히 비교하고 승인하세요", "o"); setTimeout(() => { this.hide(); go("brief"); setTimeout(() => openCard("photos", true), 80); }, 900); }
-            else if (j.mode === "plan") UI.toast("기획안을 만들었습니다", "o");
-            else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 900); }
-          } else UI.toast(`${this.name} ${MODE_LABEL[j.mode] || ""} 완료 — [${j.mode === "productcut" ? "제품 컷 보기" : "검수로"}] 를 누르면 그 프로젝트로 이동합니다`, "o");
-        } else { if (j.needLogin) Login.prompt(); UI.toast(j.canResume ? "AI 작업이 끝나지 않았습니다 — [이어서 하기] 로 남은 것만 진행할 수 있습니다" : "AI 작업이 종료됐습니다 — 로그를 확인하세요", "w"); this.logOpen = true; L.hidden = false; this.el.classList.add("logon"); if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); }); }
+            if (j.mode === "plan") UI.toast("기획안을 만들었습니다", "o");
+            else { UI.toast(`${MODE_LABEL[j.mode] || "AI 작업"} 완료 — 검수 화면으로 이동합니다`, "o"); setTimeout(() => { this.hide(); App.curTile = j.newId || j.tile || null; go("review"); }, 1600); }
+          } else UI.toast(`${this.name} ${MODE_LABEL[j.mode] || ""} 완료 — [검수로] 를 누르면 그 프로젝트로 이동합니다`, "o");
+        } else {
+          this.errCard(j); this.min = false; this.el.classList.remove("min");
+          if (j.needLogin) Login.prompt().then(ok => { if (ok) this.resume(); }); else if (j.needHf) HF.prompt().then(ok => { if (ok) this.resume(); });
+          if (same) FS.load(FS.name, true).then(() => { if (App.view === "home") go("home"); });
+        }
       } else el2.textContent = "";
     };
     await tick(); this.timer = setInterval(tick, 1500);
@@ -1370,15 +1409,15 @@ async function renderConnect(box, silent) {
   const pill = (state, txt) => `<span class="pill ${state}">${txt}</span>`;
   const row = (title, desc, status, btns) => `<div class="tool"><div class="tico">${svg("term")}</div><div class="ttx"><b>${title}</b> ${status}<small>${desc}</small></div><div class="tbtns">${btns}</div></div>`;
   const c = t.claude, h = t.higgsfield, x = t.codex;
-  const ready = c.installed && c.loggedIn && h.connected && h.authed;
+  const ready = c.installed && c.loggedIn && h.authed;
   box.innerHTML = `<div class="note ${ready ? "o" : "w"}">${svg(ready ? "check" : "warn")}<div class="nb">${ready ? `<b>제작 준비 완료.</b> 브리프 마지막의 <b>AI로 상세페이지 만들기</b>와 검수의 <b>AI 수정 실행</b>이 이 창 안에서 바로 돌아갑니다.` : `<b>아직 준비가 안 됐습니다.</b> 아래 항목을 눌러 브라우저에서 로그인만 하면 됩니다. 검은 창은 뜨지 않습니다.`}</div></div>
     <div class="tools">
       ${row("Claude Code", c.installed ? (c.loggedIn ? `로그인됨 · ${esc(c.email || "")}` : "설치는 됐고 로그인만 남았습니다.") : "상세페이지를 실제로 만드는 쪽. Node.js " + (t.node ? esc(t.node) : "<b>없음</b>"),
         c.installed ? (c.loggedIn ? pill("ok", "연결됨 " + esc(c.version)) : pill("no", "로그인 필요")) : pill("no", "미설치"),
         c.installed ? (c.loggedIn ? `<button class="btn ghost sm" data-do="logout-claude">로그아웃</button>` : `<button class="btn pri" data-do="login-claude">${svg("lock")} 로그인</button>`) : `<button class="btn pri" data-do="install-claude">${svg("down")} 설치</button>`)}
-      ${row("Higgsfield MCP", "이미지 생성(gpt_image_2_5). Claude Code 에 붙여 쓰고, 인증도 브라우저에서 끝납니다.",
-        !c.installed ? pill("no", "Claude Code 먼저") : !h.connected ? pill("no", "미등록") : h.authed ? pill("ok", "연결됨") : pill("no", "인증 필요"),
-        !c.installed ? "" : !h.connected ? `<button class="btn pri" data-do="add-mcp">${svg("plus")} 등록 + 인증</button>` : h.authed ? `<button class="btn ghost sm" data-do="auth-mcp">재인증</button>` : `<button class="btn pri" data-do="auth-mcp">${svg("lock")} 인증</button>`)}
+      ${row("Higgsfield", h.authed ? `이미지 생성(gpt_image_2_5). ${h.src === "console" ? "콘솔이 직접 인증 · " + (h.refreshable ? "자동 갱신" : "만료되면 다시 연결") : "Claude 방식 인증을 콘솔이 보관해 사용"}${h.verified === null && h.reason ? " · 확인 중 네트워크 오류" : ""}` : "이미지 생성(gpt_image_2_5). [연결] → 브라우저에서 로그인·허용만 하면 콘솔이 토큰을 보관하고 알아서 갱신합니다.",
+        h.authed ? pill("ok", "연결됨") : pill("no", h.pending ? "브라우저에서 진행 중" : "연결 필요"),
+        (h.authed ? `<button class="btn ghost sm" data-do="hf-login">다시 연결</button><button class="btn ghost sm" data-do="hf-logout">해제</button>` : `<button class="btn pri" data-do="hf-login">${svg("lock")} 연결</button>`) + (c.installed ? `<button class="btn ghost sm" data-do="auth-mcp" title="콘솔 연결이 안 될 때만">Claude 방식으로 인증</button>` : ""))}
       ${row("GPT Codex CLI", "선택. 카피 교정·보조용. 없어도 제작은 됩니다.",
         x.installed ? (x.loggedIn ? pill("ok", "연결됨 " + esc(x.version)) : pill("no", "로그인 필요")) : pill("no", "미설치"),
         x.installed ? (x.loggedIn ? "" : `<button class="btn" data-do="login-codex">${svg("lock")} 로그인</button>`) : `<button class="btn" data-do="install-codex">${svg("down")} 설치</button>`)}
@@ -1501,13 +1540,30 @@ const Login = {
         await sleep(3000); let t; try { t = await Local.tools(); } catch (e) { continue; }
         if (!(t.claude && t.claude.loggedIn)) continue;
         UI.toast(`Claude 로그인 완료${t.claude.email ? " — " + t.claude.email : ""}`, "o"); Usage.load(true);
-        if (!(t.higgsfield.connected && t.higgsfield.authed)) {
-          const h = await UI.confirm("Higgsfield 인증도 해주세요", "이미지 생성(제작·수정·제품 컷)에 필요합니다. 버튼을 누르면 브라우저에서 인증만 하면 됩니다.", { ok: "Higgsfield 인증", tone: "w", cancel: "나중에" });
-          if (h) { try { await Local.toolAct(t.higgsfield.connected ? "auth-mcp" : "add-mcp"); UI.toast("브라우저에서 Higgsfield 인증을 마치세요"); } catch (e) { UI.toast(e.message, "w"); } }
-        }
+        if (!t.higgsfield.authed) { this.busy = false; await HF.prompt(); }
         return true;
       }
       UI.toast("로그인 확인이 안 됩니다 — 설정 → 연결에서 다시 확인하세요", "w"); return false;
+    } finally { this.busy = false; }
+  }
+};
+
+/* ═══ Higgsfield 연결 — 콘솔이 직접 인증(자동 갱신). 끊기면 안내창 → 브라우저 로그인 → 자동 확인 ═══ */
+const HF = {
+  busy: false,
+  async prompt(force) {
+    if (this.busy || !Local.desktop) return false; this.busy = true;
+    try {
+      if (!force) { const v = await UI.dialog({ title: "Higgsfield 연결이 필요합니다", sub: "이미지 생성(제작·수정·한 장 다시)은 Higgsfield 연결이 있어야 돌아갑니다. [연결] 을 누르면 브라우저가 열리고, 로그인 → 허용만 누르면 콘솔이 알아서 확인합니다. 한 번 연결하면 콘솔이 알아서 갱신합니다.", icon: "lock", tone: "w",
+          buttons: [{ label: "나중에", value: 0 }, { label: "Higgsfield 연결", value: 1, kind: "pri" }] }); if (v !== 1) return false; }
+      try { await Local.toolAct("hf-login"); } catch (e) { UI.alert("연결을 시작하지 못했습니다", esc(e.message), "d"); return false; }
+      UI.toast("브라우저에서 Higgsfield 로그인 → 허용을 누르세요 — 끝나면 자동으로 확인합니다");
+      for (let i = 0; i < 100; i++) {
+        await sleep(3000); let t; try { t = await Local.tools(); } catch (e) { continue; }
+        if (t.higgsfield && t.higgsfield.authed && t.higgsfield.verified !== null) { UI.toast("Higgsfield 연결 완료" + (t.higgsfield.refreshable ? " — 앞으로 콘솔이 알아서 갱신합니다" : ""), "o"); Usage.load(true); if (App.view === "settings") go("settings"); return true; }
+        if (t.higgsfield && t.higgsfield.verified === false && t.higgsfield.reason === "auth" && !t.higgsfield.pending) { UI.alert("Higgsfield 가 인증을 받아주지 않았습니다", "설정 → 연결에서 <b>Claude 방식으로 인증</b> 을 눌러 주세요. 그 토큰도 콘솔이 보관해서 씁니다.", "w"); return false; }
+      }
+      UI.toast("연결 확인이 안 됩니다 — 설정 → 연결에서 다시 확인하세요", "w"); return false;
     } finally { this.busy = false; }
   }
 };
@@ -1665,55 +1721,6 @@ async function enqueue(b, what) {
   try { const j = await Local.queueAdd(Object.assign({ name: FS.name, photoMode: photoModeOf() }, b, { startAt: when })); UI.toast(j.message || "대기열에 넣었습니다", "o"); Usage.load(); await QueueUI.load(); return true; }
   catch (e) { UI.alert("대기열에 넣지 못했습니다", esc(e.message), "d"); return false; }
 }
-
-/* ═══ 제품 컷 A/B 비교 승인 (#1) ═══ */
-const Cut = {
-  meta(c) { return ((FS.cutsMeta || {}).cuts || []).find(x => x.file === c.name) || {}; },
-  orig(c) { const m = this.meta(c); return (FS.images || []).find(i => i.name === m.from) || (FS.images || [])[0] || null; },
-  box() {
-    if (!Local.desktop || !(FS.images || []).length) return "";
-    const cuts = FS.cuts || [], ap = FS.approved;
-    const head = `<div class="pcut-h">${svg("layers")}<b>제품 컷 먼저 확인</b><span class="tag ${ap ? "ok" : "n"}">${ap ? "승인됨 · 본 제작에 사용" : "권장"}</span><span class="sp"></span>${cuts.length ? `<button class="btn sm ghost" data-cut="more">${svg("refresh")} 다시 만들기</button>` : ""}</div>`;
-    if (!cuts.length) return `<div class="pcut">${head}<p class="hint" style="margin:6px 0 10px">AI 고화질 재현 제품 컷(누끼·연출 2장)을 먼저 만들어 <b>원본과 나란히</b> 보고 승인합니다. 승인한 컷은 본 제작에서 그대로 합성해 라벨·로고가 틀리는 사고를 제작 <b>전에</b> 막습니다. (이미지 약 2장 분량)</p><button class="btn sm pri" data-cut="make">${svg("sparkles")} 제품 컷 만들기</button></div>`;
-    return `<div class="pcut">${head}<div class="cutgrid">${cuts.map(c => { const m = this.meta(c), o = this.orig(c), on = ap && ap.file === c.name;
-      return `<div class="cutc${on ? " ok" : ""}"><div class="cutab" data-cut="cmp" data-f="${esc(c.name)}" title="크게 비교"><figure>${o ? `<img src="${o.url}" alt="">` : ""}<figcaption>원본</figcaption></figure><figure><img src="${c.url}" alt=""><figcaption>${esc(m.kind || c.name.replace(/\.[^.]+$/, ""))}</figcaption></figure></div>
-        ${m.check ? `<p class="cutchk">${esc(m.check)}</p>` : ""}
-        <div class="cutb"><button class="btn sm" data-cut="cmp" data-f="${esc(c.name)}">${svg("eye")} 크게 비교</button>${on ? `<button class="btn sm" data-cut="unok">승인 취소</button>` : `<button class="btn sm pri" data-cut="ok" data-f="${esc(c.name)}">${svg("check")} 승인</button>`}<button class="btn sm ghost" data-cut="del" data-f="${esc(c.name)}" title="빼기">${svg("trash")}</button></div></div>`; }).join("")}</div>
-      <p class="hint" style="margin:8px 0 0">${ap ? `<b>${esc(ap.file)}</b> 를 본 제작에 씁니다. 로고·라벨 글자·형태가 원본과 같은지 확인하셨죠?` : "로고·라벨 글자·형태가 원본과 같은 컷을 <b>승인</b>하세요. 다르면 다시 만들기."}</p></div>`;
-  },
-  paint() { const b = $("#pcut"); if (b) b.innerHTML = this.box(); },
-  async act(k, f) {
-    const c = (FS.cuts || []).find(x => x.name === f);
-    if (k === "make" || k === "more") return ACT.productCut(k === "more");
-    if (k === "cmp" && c) return this.compare(c);
-    if (k === "ok" && c) return this.approve(c);
-    if (k === "unok") { try { await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: "", at: new Date().toISOString() })); } catch (e) {} FS.approved = null; this.paint(); return UI.toast("승인을 취소했습니다"); }
-    if (k === "del" && c) { if (!(await UI.confirm("이 컷을 뺄까요?", `${esc(c.name)} 은 _trash 로 옮겨집니다.`, { ok: "빼기", danger: true }))) return; try { await Local.deleteFile(FS.name, c.name, "product"); if (FS.approved && FS.approved.file === c.name) await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: "" })); await reloadProject(); this.paint(); } catch (e) { UI.toast(e.message, "w"); } }
-  },
-  async approve(c) {
-    const m = this.meta(c);
-    try { await Local.save(FS.name, "product/approved.json", JSON.stringify({ file: c.name, from: m.from || "", at: new Date().toISOString() }, null, 2)); FS.approved = { file: c.name, from: m.from || "" }; Local.logAdd(FS.name, "check", `제품 컷 승인 — ${c.name}`); this.paint(); UI.toast("승인했습니다 — 본 제작에서 이 컷을 그대로 씁니다", "o"); }
-    catch (e) { UI.alert("저장 실패", esc(e.message), "d"); }
-  },
-  async compare(c) {
-    const o = this.orig(c), m = this.meta(c), origs = FS.images || [];
-    const v = await UI.dialog({ title: "원본 ↔ AI 제품 컷", sub: "로고·라벨 글자(한 글자씩)·형태·색이 같은지 보세요. 겹쳐 보기에서 막대를 끌면 경계가 움직입니다.", icon: "eye", tone: "b", wide: true,
-      body: `<div class="abhead"><div class="seg" id="abMode"><button class="on" data-m="side">나란히</button><button data-m="over">겹쳐 보기</button></div><label class="hint" style="margin:0">원본 <select id="abOrig">${origs.map(i => `<option value="${esc(i.url)}"${o && i.url === o.url ? " selected" : ""}>${esc(i.name)}</option>`).join("")}</select></label></div>
-        <div class="abw side" id="abw"><figure class="aa"><img id="abA" src="${o ? o.url : ""}" alt=""><figcaption>원본</figcaption></figure><figure class="bb"><img id="abB" src="${c.url}" alt=""><figcaption>${esc(m.kind || c.name)}</figcaption></figure><i class="abar" id="abBar"></i></div>
-        <input type="range" id="abR" min="0" max="100" value="50" hidden>${m.check ? `<p class="hint" style="margin-top:8px">AI 대조 메모: ${esc(m.check)}</p>` : ""}`,
-      buttons: [{ label: "닫기", value: 0 }, { label: "다시 만들기", value: 2 }, { label: "승인", value: 1, kind: "pri" }],
-      onOpen(d) {
-        const w = $("#abw", d), r = $("#abR", d), set = () => { w.style.setProperty("--ab", r.value + "%"); };
-        $("#abMode", d).onclick = e => { const b = e.target.closest("[data-m]"); if (!b) return; $$("#abMode button", d).forEach(x => x.classList.toggle("on", x === b)); w.className = "abw " + b.dataset.m; r.hidden = b.dataset.m !== "over"; set(); };
-        r.oninput = set; set();
-        w.addEventListener("pointermove", e => { if (!w.classList.contains("over") || !(e.buttons & 1)) return; const bx = w.getBoundingClientRect(); r.value = clamp(Math.round((e.clientX - bx.left) / bx.width * 100), 0, 100); set(); });
-        $("#abOrig", d).onchange = e => { $("#abA", d).src = e.target.value; };
-        $$("img", w).forEach(im => im.ondblclick = () => UI.lightbox(im.src));
-      } });
-    if (v === 1) return this.approve(c);
-    if (v === 2) return ACT.productCut(true);
-  }
-};
 
 /* ═══ 경쟁사 상세페이지 분석 (#19) ═══ */
 const Ref = {
@@ -1947,7 +1954,7 @@ async function aiReady() {
   const mine = (t.runs || []).find(r => r.name === FS.name && r.running); if (mine) return { ok: false, why: "이 프로젝트는 이미 AI 작업 중입니다", running: true };
   if (!t.claude.installed) return { ok: false, why: "Claude Code 가 설치되지 않았습니다", fix: true };
   if (!t.claude.loggedIn) return { ok: false, why: "Claude 로그인이 만료됐습니다", fix: true, login: true };
-  if (!t.higgsfield.connected || !t.higgsfield.authed) return { ok: false, why: "Higgsfield MCP 인증이 필요합니다", fix: true };
+  if (!t.higgsfield.authed) return { ok: false, why: "Higgsfield 연결이 필요합니다", fix: true, hf: true };
   return { ok: true };
 }
 const ACT = {
@@ -1993,20 +2000,18 @@ const ACT = {
     const rd = Local.desktop ? await aiReady() : { ok: false };
     if (!FS.analysis.length) return UI.alert("사진이 없습니다", "제품 사진을 먼저 넣어주세요. 사진 없이는 제품이 들어간 타일을 만들 수 없습니다.", "w");
     if (Local.desktop && !Usage.data) await Promise.race([Usage.load(), sleep(2500)]);
-    const cutHint = Local.desktop && photoModeOf() === "regen" && !FS.approved;
     const btns = [{ label: "닫기", value: 0 }];
-    if (Local.desktop) { if (rd.ok) { btns.push({ label: "대기열·예약", value: 6 }); btns.push({ label: "여기서 바로 제작", value: 3, kind: "pri" }); } else btns.push(rd.login ? { label: "다시 로그인", value: 8, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" }); }
+    if (Local.desktop) { if (rd.ok) { btns.push({ label: "대기열·예약", value: 6 }); btns.push({ label: "여기서 바로 제작", value: 3, kind: "pri" }); } else btns.push(rd.login ? { label: "다시 로그인", value: 8, kind: "pri" } : rd.hf ? { label: "Higgsfield 연결", value: 9, kind: "pri" } : rd.fix ? { label: "연결 설정으로", value: 4, kind: "pri" } : { label: "터미널로 열기", value: 5, kind: "pri" }); }
     else btns.push({ label: "명령 복사", value: 1, kind: "pri" });
     const v = await UI.dialog({ title: "제작 준비가 됐습니다", sub: `브리프와 사진 분석을 정리했습니다.`, icon: "sparkles", tone: rd.ok ? "o" : "b",
       body: `<p style="margin:0 0 10px">${rd.ok ? "<b>여기서 바로 제작</b>을 누르면 Claude Code 가 이 창 안에서 기획안 → 타일 생성까지 돌립니다. 진행은 오른쪽 아래 패널에 뜨고, 끊기면 자동으로 이어서 합니다. 보통 15~30분, 크레딧 약 " + (layoutSel().length * 3) + ". <b>대기열·예약</b>으로 밤에 돌려도 됩니다." : Local.desktop ? `<b>${esc(rd.why || "")}</b>` : "Claude 대화창에 아래 한 줄을 붙여넣으면 <code>order.json</code>을 읽어 <b>기획안 → 타일 생성</b>으로 이어집니다."}</p>${Local.desktop && rd.ok ? "" : `<pre class="cmd">${esc(cmd)}</pre>`}
         ${Local.desktop && Usage.line() ? `<div class="note ${Usage.warn() ? "w" : "i"}">${svg(Usage.warn() ? "warn" : "gauge")}<div class="nb">${esc(Usage.line())}${Usage.warn() ? "<br><b>한도에 가깝습니다</b> — 중간에 멈출 수 있어요. 리셋 뒤로 예약하는 것을 권장합니다." : ""}</div></div>` : ""}
-        ${cutHint ? `<div class="note b">${svg("layers")}<div class="nb"><b>제품 컷을 먼저 승인하면</b> 라벨·로고가 틀린 채 15장을 다시 만드는 일을 막습니다. <button class="btn sm" data-mk="cut" style="margin-left:4px">제품 컷 먼저 만들기</button></div></div>` : ""}
-        <p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${photoModeOf() === "keep" ? "원본 합성" : "AI 고화질 재현"}${FS.approved ? " · 승인 컷 " + esc(FS.approved.file) : ""}${FS.ref && FS.ref.summary ? " · 경쟁사 분석 반영" : ""}</p>`,
-      buttons: btns, onOpen(d) { const b = $("[data-mk]", d); if (b) b.onclick = () => UI._close(7); } });
+        <p class="hint" style="margin:10px 0 0">브리프 ${p.done}/${p.total} · 사진 ${FS.analysis.length}장 · 구성 ${layoutSel().length}섹션 · 제품 사진 ${photoModeOf() === "keep" ? "원본 합성" : "AI 고화질 재현"}${FS.ref && FS.ref.summary ? " · 경쟁사 분석 반영" : ""}</p>`,
+      buttons: btns });
     if (v === 3) return ACT.runAI("make");
     if (v === 6) return enqueue({ mode: "make" }, `제작 — ${FS.name}`);
-    if (v === 7) return ACT.productCut();
     if (v === 8) return Login.prompt();
+    if (v === 9) return HF.prompt(true);
     if (v === 4) return go("settings");
     if (v === 5) return ACT.runClaudeTerm();
     const txt = v === 1 ? cmd : null; if (!txt) return;
@@ -2014,7 +2019,7 @@ const ACT = {
   },
   async runAI(mode, extra) {
     try { await Local.run(FS.name, mode, "", photoModeOf(), extra); RunUI.show(runTitle(mode, FS.name, extra), FS.name, mode); UI.toast("AI 작업을 시작했습니다", "o"); Usage.load(); }
-    catch (e) { if (!e.needLogin) UI.alert("시작 실패", esc(e.message), "d"); }
+    catch (e) { if (!e.needLogin && !e.needHf) UI.alert("시작 실패", esc(e.message), "d"); }
   },
   /* 검수 영역·코멘트 → review.json + review/NN_marked.png → (EXE) AI 수정 */
   async revise() {
@@ -2034,6 +2039,7 @@ const ACT = {
       const rd = await aiReady();
       if (rd.ok) return ACT.runAI("revise");
       if (rd.login) return Login.prompt();
+      if (rd.hf) return HF.prompt();
       const v = await UI.dialog({ title: "바로 실행할 수 없습니다", sub: esc(rd.why), icon: "warn", tone: "w", body: `<pre class="cmd">${esc(cmd)}</pre>`, buttons: [{ label: "닫기", value: 0 }, { label: "명령 복사", value: 1 }].concat(rd.fix ? [{ label: "연결 설정으로", value: 2, kind: "pri" }] : []) });
       if (v === 2) return go("settings"); if (v !== 1) return;
     }
@@ -2060,7 +2066,7 @@ const ACT = {
 
 /* v4.8 액션 */
 async function writeOrder() {
-  return FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order: buildOrder(), photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: photoModeOf(), approvedCut: FS.approved ? FS.approved.file : "", ref: FS.ref && FS.ref.summary ? { summary: FS.ref.summary, ideas: FS.ref.ideas || [], differ: FS.ref.differ || [], avoid: FS.ref.avoid || [] } : null }, null, 2));
+  return FS.write("order.json", JSON.stringify({ project: FS.name || Store.get("lastProject", ""), savedAt: new Date().toISOString(), brief: App.brief, review: App.review, order: buildOrder(), photos: photoRows(), photoSummary: FS.summary, layout: layoutSel(), photoMode: photoModeOf(), ref: FS.ref && FS.ref.summary ? { summary: FS.ref.summary, ideas: FS.ref.ideas || [], differ: FS.ref.differ || [], avoid: FS.ref.avoid || [] } : null }, null, 2));
 }
 Object.assign(ACT, {
   exportMenu() { return Export.open(); },
@@ -2095,20 +2101,8 @@ Object.assign(ACT, {
     if (ins && !note) return UI.toast("추가할 장의 내용을 적어주세요", "w");
     const extra = { tile: n, op: ins ? "insert" : "regen", note };
     if (v === 2) return enqueue(Object.assign({ mode: "tile" }, extra), `${n} ${ins ? "뒤에 추가" : "다시"} — ${FS.name}`);
-    const rd = await aiReady(); if (!rd.ok) return rd.login ? Login.prompt() : rd.fix ? (await UI.confirm("바로 실행할 수 없습니다", esc(rd.why), { ok: "연결 설정으로" })) && go("settings") : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
+    const rd = await aiReady(); if (!rd.ok) return rd.login ? Login.prompt() : rd.hf ? HF.prompt() : rd.fix ? (await UI.confirm("바로 실행할 수 없습니다", esc(rd.why), { ok: "연결 설정으로" })) && go("settings") : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
     return ACT.runAI("tile", extra);
-  },
-  /* 제품 컷 먼저 (#1) */
-  async productCut(again) {
-    if (!Local.desktop) return UI.toast("EXE 에서만 됩니다", "w");
-    if (!(FS.images || []).length) return UI.toast("원본 사진을 먼저 넣어주세요", "w");
-    const v = await UI.dialog({ title: again ? "제품 컷 다시 만들기" : "제품 컷 먼저 만들기", sub: "원본 사진을 참고해 로고·라벨 글자·형태·색은 그대로, 화질만 스튜디오급으로 2장(누끼·연출)을 만듭니다. 2K, 라벨 글자 한 자씩 대조.", icon: "sparkles", tone: "b",
-      body: `<div class="fld"><label>연출 컷 요청 <span class="opt">선택</span></label><textarea id="pcNote" placeholder="예: 대리석 위, 자연광, 따뜻한 톤 — 비우면 브리프 분위기대로${again ? "\n이전 컷에서 틀린 점(예: 라벨 두 번째 줄 글자)을 적으면 더 정확해집니다" : ""}"></textarea></div><p class="hint">${Usage.line() ? esc(Usage.line()) + " · " : ""}이미지 약 2~4장 분량 · 3~6분</p>`,
-      buttons: [{ label: "취소", value: 0 }, { label: "만들기", value: 1, kind: "pri" }], onOpen(d) { setTimeout(() => $("#pcNote", d).focus(), 60); } });
-    const note = ($("#pcNote") && $("#pcNote").value.trim()) || ""; if (v !== 1) return;
-    await ACT.saveBrief(true); await writeOrder();
-    const rd = await aiReady(); if (!rd.ok) return rd.login ? Login.prompt() : UI.alert("바로 실행할 수 없습니다", esc(rd.why), "w");
-    return ACT.runAI("productcut", { note });
   }
 });
 
@@ -2125,7 +2119,6 @@ function buildOrder() {
   const blocked = sel.filter(id => (id === "reviews" && !hasReviews) || (id === "awards" && !hasAwards));
   if (blocked.length) L.push("  ⚠ 자료 없음 → 제작 보류: " + blocked.map(id => catOf(id).label).join(", "));
   L.push("");
-  if (FS.approved) L.push("■ 승인된 제품 컷", `  product/${FS.approved.file} — 원본과 대조해 승인. 제품이 나오는 타일은 이 컷을 그대로 합성`, "");
   if (FS.ref && FS.ref.summary) { L.push("■ 경쟁사 참고 (구성·흐름만 참고, 문구·이미지 복제 금지)", "  " + FS.ref.summary); (FS.ref.ideas || []).forEach(x => L.push("  · 적용: " + x)); (FS.ref.differ || []).forEach(x => L.push("  · 차별화: " + x)); (FS.ref.avoid || []).forEach(x => L.push("  · 피할 것: " + x)); L.push(""); }
   if (s) { L.push("■ 사진 분석", `  ${s.total}장 · 평균 긴 변 ${s.avgLong}px · 누끼 적합 ${s.cuttable}장 · 포인트 컬러 ${s.accent}`); if (s.low) L.push(`  ⚠ 해상도 부족 ${s.low}장 — ${s.lowNames.join(", ")} → 업스케일 후 합성`); L.push(""); }
   if (App.tiles.length) {
@@ -2159,5 +2152,5 @@ async function boot() {
   if (Local.desktop) { Usage.start(); QueueUI.load().then(() => renderSide()); try { const all = (await Local.runsAll()).runs || []; const st = all.find(r => r.running && r.name === FS.name) || all.find(r => r.running); if (st) RunUI.show(runTitle(st.mode, st.name, st), st.name, st.mode); } catch (e) {} try { const sg = await Local.suggestStatus(); if (sg.running && sg.name === FS.name) { Suggest.running = true; Suggest.run(); } } catch (e) {} Update.start(); }
 }
 document.addEventListener("DOMContentLoaded", boot);
-window.rebootApp = { Login, App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest, Read, Typo, Usage, QueueUI, Cut, Ref, Feedback, Export, Versions, Projects, Home };
+window.rebootApp = { Login, HF, App, FS, UI, go, Store, Local, Tiles, Review, RunUI, ACT, Update, Suggest, Read, Typo, Usage, QueueUI, Ref, Feedback, Export, Versions, Projects, Home };
 })();

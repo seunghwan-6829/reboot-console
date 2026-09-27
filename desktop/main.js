@@ -10,7 +10,8 @@
    설정(userData/config.json) → 포터블 EXE 위치 순으로 정한다.
    ═══════════════════════════════════════════════════════ */
 "use strict";
-const { app, BrowserWindow, dialog, shell, nativeImage, Menu, clipboard, Tray, Notification, powerSaveBlocker, session } = require("electron");
+const { app, BrowserWindow, dialog, shell, nativeImage, Menu, clipboard, Tray, Notification, powerSaveBlocker, session, safeStorage } = require("electron");
+const crypto = require("crypto");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -280,6 +281,131 @@ function authState(maxAge) {
 const NEED_LOGIN = { ok: false, needLogin: true, error: "Claude 로그인이 만료됐습니다 — [다시 로그인] 을 누르고 브라우저에서 로그인만 하면 됩니다" };
 async function loginOk() { const a = await authState(); return !(a.loggedIn === false && !a.unknown); }
 
+/* ── Higgsfield 인증: 콘솔이 직접 소유한다 ─────────────────
+   예전엔 `claude mcp login higgsfield` 토큰(~/.claude/.credentials.json)에 기댔는데, Claude 가 자기 토큰을 갱신하며
+   파일을 다시 쓸 때 그 토큰이 통째로 사라져 "needs-auth" 로 계속 끊겼다.
+   → 콘솔이 Higgsfield(Clerk) OAuth 를 직접 한다: 앱 등록(DCR) + PKCE + offline_access(자동 갱신 토큰).
+     토큰은 userData/hf-auth.json 에 Windows 보호 저장소(safeStorage)로 암호화해 두고, 만료 10분 전이면 갱신한다.
+     AI 작업에는 --mcp-config(헤더에 토큰) + --strict-mcp-config 로 넘겨 Claude 쪽 저장소와 완전히 분리한다.
+   Claude 방식으로 인증된 토큰이 있으면 콘솔 토큰이 없을 때만 예비로 쓴다. */
+const HF_ISSUER = "https://clerk.higgsfield.ai", HF_RESOURCE = HIGGSFIELD_URL;
+const HF_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 reboot-console";
+const NEED_HF = { ok: false, needHf: true, error: "Higgsfield 연결이 필요합니다 — [Higgsfield 연결] 을 누르고 브라우저에서 로그인만 하면 됩니다" };
+async function hfRpcSession(tok) {
+  let sid = "";
+  const rpc = async (body, idWanted) => {
+    const h = { Authorization: "Bearer " + tok, "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18", "User-Agent": HF_UA }; if (sid) h["mcp-session-id"] = sid;
+    const r = await fetch(HIGGSFIELD_URL, { method: "POST", headers: h, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+    if (!sid && r.headers.get("mcp-session-id")) sid = r.headers.get("mcp-session-id");
+    if (r.status === 401 || r.status === 403) throw new Error("AUTH");
+    if (idWanted == null) return null;
+    const ct = r.headers.get("content-type") || "", t = await r.text();
+    if (/event-stream/.test(ct)) { for (const ln of t.split(/\r?\n/)) { if (!ln.startsWith("data:")) continue; try { const m = JSON.parse(ln.slice(5).trim()); if (m.id === idWanted) return m; } catch (x) {} } return null; }
+    try { return JSON.parse(t); } catch (x) { return null; }
+  };
+  await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "reboot-console", version: APP_VERSION } } }, 1);
+  await rpc({ jsonrpc: "2.0", method: "notifications/initialized" });
+  return rpc;
+}
+const HFA = {
+  d: null, pend: null, verified: { at: 0, ok: null, reason: "" },
+  file() { return path.join(app.getPath("userData"), "hf-auth.json"); },
+  load() {
+    if (this.d) return this.d;
+    try { const raw = JSON.parse(fs.readFileSync(this.file(), "utf8")); const txt = raw.enc ? safeStorage.decryptString(Buffer.from(raw.enc, "base64")) : raw.plain; this.d = JSON.parse(txt) || {}; } catch (e) { this.d = {}; }
+    return this.d;
+  },
+  save() {
+    try { const txt = JSON.stringify(this.d || {}); const out = safeStorage.isEncryptionAvailable() ? { enc: safeStorage.encryptString(txt).toString("base64") } : { plain: txt };
+      fs.mkdirSync(path.dirname(this.file()), { recursive: true }); fs.writeFileSync(this.file(), JSON.stringify(out)); } catch (e) { logErr(e); }
+  },
+  async post(url, form) {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": HF_UA, Accept: "application/json" }, body: new URLSearchParams(form).toString(), signal: AbortSignal.timeout(20000) });
+    const t = await r.text(); let j = {}; try { j = JSON.parse(t); } catch (e) {}
+    if (!r.ok) { const er = new Error(j.error_description || j.error || ("HTTP " + r.status + " " + t.slice(0, 120))); er.status = r.status; er.code = j.error || ""; throw er; }
+    return j;
+  },
+  keep(j, src) { const d = this.load(); d.access = j.access_token; if (j.refresh_token) d.refresh = j.refresh_token; d.exp = j.expires_in ? Date.now() + (+j.expires_in) * 1000 : 0; d.src = src; d.at = Date.now(); delete d.refreshFail; this.save(); this.verified = { at: 0, ok: null }; },
+  async startLogin() {
+    if (!PORT) return { ok: false, error: "콘솔 서버가 아직 준비되지 않았습니다" };
+    const redirect = `http://127.0.0.1:${PORT}/hf/callback`, d = this.load();
+    if (!d.clientId || d.redirect !== redirect) {
+      const r = await fetch(HF_ISSUER + "/oauth/register", { method: "POST", headers: { "Content-Type": "application/json", "User-Agent": HF_UA }, signal: AbortSignal.timeout(20000),
+        body: JSON.stringify({ client_name: "re:boot 콘솔", redirect_uris: [redirect], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "openid email offline_access" }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.client_id) return { ok: false, error: "Higgsfield 앱 등록에 실패했습니다 (" + r.status + ") — 잠시 뒤 다시 누르세요" };
+      d.clientId = j.client_id; d.redirect = redirect; this.save();
+    }
+    const verifier = crypto.randomBytes(32).toString("base64url"), state = crypto.randomBytes(16).toString("hex");
+    const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+    this.pend = { verifier, state, at: Date.now(), done: false, error: "" };
+    const u = new URL(HF_ISSUER + "/oauth/authorize");
+    Object.entries({ response_type: "code", client_id: d.clientId, redirect_uri: redirect, scope: "openid email offline_access", code_challenge: challenge, code_challenge_method: "S256", state, resource: HF_RESOURCE, prompt: "consent" }).forEach(([k, v]) => u.searchParams.set(k, v));
+    shell.openExternal(u.toString());
+    return { ok: true, message: "브라우저에서 Higgsfield 로그인 → 허용을 누르세요", poll: true };
+  },
+  async callback(q) {
+    const p = this.pend;
+    if (q.get("error")) throw new Error(q.get("error_description") || q.get("error"));
+    if (!p || q.get("state") !== p.state) throw new Error("인증 요청이 맞지 않습니다 — 콘솔에서 [Higgsfield 연결] 을 다시 눌러주세요");
+    const d = this.load();
+    const j = await this.post(HF_ISSUER + "/oauth/token", { grant_type: "authorization_code", code: q.get("code") || "", redirect_uri: d.redirect, client_id: d.clientId, code_verifier: p.verifier, resource: HF_RESOURCE });
+    this.pend = null; this.keep(j, "console"); MCPCHK.at = 0; USAGE.hAt = 0;
+    actLog("", "ai", "Higgsfield 연결 (콘솔 인증" + (j.refresh_token ? " · 자동 갱신" : "") + ")");
+    return this.verify(true);
+  },
+  async refresh() {
+    const d = this.load(), cid = d.src === "console" ? d.clientId : d.capClientId; if (!d.refresh || !cid) return false;
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      try { const j = await this.post(HF_ISSUER + "/oauth/token", { grant_type: "refresh_token", refresh_token: d.refresh, client_id: cid, resource: HF_RESOURCE }); this.keep(j, d.src || "console"); return true; }
+      catch (e) { logErr("Higgsfield 토큰 갱신 실패: " + e.message); d.refreshFail = String(e.message).slice(0, 140); if (e.status === 400 || e.status === 401) { d.refresh = ""; } this.save(); return false; }
+      finally { setTimeout(() => { this.refreshing = null; }, 0); }
+    })();
+    return this.refreshing;
+  },
+  /* Claude 방식(claude mcp login)으로 받은 토큰이 살아 있으면 예비로 복사해 둔다 — 콘솔 토큰이 없을 때만 */
+  capture() {
+    try {
+      const d = this.load(); if (d.src === "console" && (d.access || d.refresh)) return;
+      const cr = readCreds() || {}, e = Object.entries(cr.mcpOAuth || {}).find(([k]) => k.startsWith("higgsfield|")), v = e && e[1];
+      if (v && v.accessToken && (!v.expiresAt || +v.expiresAt > Date.now() + 60000) && v.accessToken !== d.access) { d.access = v.accessToken; d.exp = +v.expiresAt || 0; d.refresh = v.refreshToken || ""; d.capClientId = v.clientId || ""; d.src = "claude"; d.at = Date.now(); this.save(); this.verified = { at: 0, ok: null }; }
+    } catch (e) {}
+  },
+  async token() {
+    this.capture(); const d = this.load();
+    if (d.access && (!d.exp || d.exp - Date.now() > 10 * 60000)) return d.access;
+    if (await this.refresh()) return this.load().access;
+    if (d.access && d.exp > Date.now() + 60000) return d.access;
+    return null;
+  },
+  /* 실제로 Higgsfield MCP 에 붙어 도구 목록까지 받아 본다 (5분 캐시). 네트워크 오류는 '끊김' 으로 보지 않는다 */
+  async verify(force) {
+    if (!force && this.verified.at && Date.now() - this.verified.at < 5 * 60000) return this.verified;
+    const tok = await this.token();
+    if (!tok) { this.verified = { at: Date.now(), ok: false, reason: "not-connected" }; return this.verified; }
+    try { const rpc = await hfRpcSession(tok); const l = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, 2); const n = ((l && l.result && l.result.tools) || []).length; this.verified = { at: Date.now(), ok: n > 0 ? true : null, tools: n, reason: n ? "" : "도구 목록이 비었습니다" }; }
+    catch (e) {
+      if (e.message === "AUTH") { const d = this.load(); if (!this._retry && await this.refresh()) { this._retry = true; try { return await this.verify(true); } finally { this._retry = false; } } d.access = ""; this.save(); this.verified = { at: Date.now(), ok: false, reason: "auth" }; }
+      else this.verified = { at: Date.now(), ok: null, reason: String(e.message).slice(0, 120), net: true };
+    }
+    return this.verified;
+  },
+  async ready() { const tok = await this.token(); if (!tok) return false; const v = await this.verify(); return v.ok !== false; },
+  status() { const d = this.load(); return { src: d.src || "", exp: d.exp || 0, refreshable: !!(d.refresh && (d.src === "console" ? d.clientId : d.capClientId)), refreshFail: d.refreshFail || "", verified: this.verified, pending: !!this.pend, hasToken: !!d.access }; },
+  logout() { this.d = {}; this.save(); this.verified = { at: 0, ok: null }; }
+};
+/* AI 작업마다 쓰는 MCP 설정 파일 — Higgsfield 만(필요할 때), 사용자 플러그인은 싣지 않는다 */
+async function mcpConfigFor(mode, key) {
+  const servers = {};
+  if (NEED_HF_MODES.has(mode)) { const tok = await HFA.token(); if (!tok) return null; servers.higgsfield = { type: "http", url: HIGGSFIELD_URL, headers: { Authorization: "Bearer " + tok } }; }
+  const dir = path.join(os.tmpdir(), "reboot-mcp"); fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, `mcp-${process.pid}-${key}.json`); fs.writeFileSync(f, JSON.stringify({ mcpServers: servers }));
+  return f;
+}
+const qarg = p => /[\s&()^]/.test(p) ? `"${p}"` : p;   // shell:true(cmd.exe)로 넘기므로 공백 경로는 따옴표
+function cleanMcpFiles(all) { try { const dir = path.join(os.tmpdir(), "reboot-mcp"); for (const f of fs.readdirSync(dir)) { const fp = path.join(dir, f); if (all || Date.now() - fs.statSync(fp).mtimeMs > 24 * 3600e3) fs.unlinkSync(fp); } } catch (e) {} }
+
 /* ── 도구 연결 (Claude Code · Codex · Higgsfield MCP) ───── */
 const sh = (cmd, ms) => new Promise(res => exec(cmd, { timeout: ms || 8000, windowsHide: true, encoding: "utf8" }, (err, out) => res(err ? "" : String(out || "").trim())));
 const sh2 = (cmd, ms) => new Promise(res => exec(cmd, { timeout: ms || 8000, windowsHide: true, encoding: "utf8" }, (err, out, se) => res(String(out || "") + String(se || ""))));  // stdout+stderr, 실패해도 텍스트
@@ -290,23 +416,14 @@ async function toolStatus() {
   if (claudeV) { const a = await authState(AUTH.v && AUTH.v.loggedIn ? 20000 : 4000); claudeAuth = a.unknown ? null : { loggedIn: a.loggedIn, email: a.email, orgName: a.org, subscriptionType: a.plan, apiKeySource: a.keySource }; }
   let codexIn = false;
   if (codexV) { const st = await sh2("codex login status", 12000); codexIn = /logged in/i.test(st) && !/not logged in/i.test(st); }
-  let hfReg = false, hfAuth = false;
-  try {
-    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"));
-    if (j.mcpServers && j.mcpServers.higgsfield) hfReg = true;
-    for (const p of Object.values(j.projects || {})) if (p && p.mcpServers && p.mcpServers.higgsfield) hfReg = true;
-  } catch (e) {}
-  try { const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude", ".credentials.json"), "utf8")); hfAuth = Object.keys(c.mcpOAuth || {}).some(k => k.startsWith("higgsfield|")); } catch (e) {}
-  // 실제 연결 확인(claude mcp list)은 느릴 수 있다 → 화면을 막지 않게 백그라운드로 갱신, 결과가 있을 때만 그것을 쓴다
-  if (hfReg && hfAuth) {
-    const now = Date.now();
-    if (!MCPCHK.busy && (!MCPCHK.at || now - MCPCHK.at > 5 * 60 * 1000)) { MCPCHK.busy = true; claudeGate().then(() => sh2("claude mcp list", 60000)).then(out => { const line = out.split(/\r?\n/).find(l => /^higgsfield:/i.test(l.trim())) || ""; MCPCHK.ok = !!line && !/needs authentication|failed/i.test(line); MCPCHK.line = line.trim(); MCPCHK.at = Date.now(); }).finally(() => { MCPCHK.busy = false; }); }
-    if (MCPCHK.at) hfAuth = MCPCHK.ok;
-  }
+  HFA.capture();
+  const hs = HFA.status();
+  if (hs.hasToken && (!HFA.verified.at || Date.now() - HFA.verified.at > 5 * 60000) && !HFA.verifying) { HFA.verifying = true; HFA.verify().finally(() => { HFA.verifying = false; }); }
+  const hfOk = hs.hasToken && HFA.verified.ok !== false;
   return { ok: true, root: ROOT, node,
     claude: { installed: !!claudeV, version: claudeV.replace(/\s*\(Claude Code\)\s*/i, ""), loggedIn: !!(claudeAuth && claudeAuth.loggedIn), email: (claudeAuth && claudeAuth.email) || "", org: (claudeAuth && claudeAuth.orgName) || "", plan: (claudeAuth && claudeAuth.subscriptionType) || "", keySource: (claudeAuth && claudeAuth.apiKeySource) || "" },
     codex: { installed: !!codexV, version: codexV.replace(/^codex-cli\s*/i, ""), loggedIn: codexIn },
-    higgsfield: { connected: hfReg, authed: hfAuth },
+    higgsfield: { connected: true, authed: hfOk, src: hs.src, refreshable: hs.refreshable, exp: hs.exp, verified: HFA.verified.ok, reason: HFA.verified.reason || hs.refreshFail || "", pending: hs.pending },
     runs: [...RUNS.values()].map(r => r.summary()), run: (() => { const r = [...RUNS.values()].find(x => x.proc && x.exit == null); return r ? r.summary() : { running: false }; })() };
 }
 const MCPCHK = { at: 0, ok: false, line: "", busy: false };
@@ -352,6 +469,8 @@ async function toolAction(q) {
       MCPCHK.at = 0; USAGE.hAt = 0; spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
       return { ok: true, message: "등록 완료 — 브라우저에서 Higgsfield 인증을 마치세요", poll: true };
     }
+    case "hf-login": return await HFA.startLogin();
+    case "hf-logout": HFA.logout(); return { ok: true, message: "Higgsfield 연결을 해제했습니다", poll: true };
     case "auth-mcp":
       MCPCHK.at = 0; USAGE.hAt = 0; spawnHidden("mcp-login", "claude", ["mcp", "login", "higgsfield"]);
       return { ok: true, message: "브라우저에서 Higgsfield 인증을 마치세요", poll: true };
@@ -389,7 +508,7 @@ const STAGES = { make: ["준비", "사진 분석", "기획안", "타일 생성",
   plan: ["준비", "사진 분석", "기획안", "정리"], tile: ["준비", "참고 확인", "타일 생성", "오타 검수", "정리"], productcut: ["준비", "사진 분석", "컷 생성", "대조 검수", "정리"], custom: ["준비", "작업", "정리"] };
 const MAINSTAGE = { make: "타일 생성", revise: "수정 생성", plan: "기획안", tile: "타일 생성", productcut: "컷 생성", custom: "작업" };
 const MODE_LABEL = { make: "제작", revise: "검수 반영", plan: "기획안", tile: "한 장 제작", productcut: "제품 컷", custom: "AI 작업", resume: "이어서 하기" };
-const NEED_HF = new Set(["make", "revise", "tile", "productcut"]);
+const NEED_HF_MODES = new Set(["make", "revise", "tile", "productcut"]);
 const MARK = mode => `[진행 표시 규칙] 작업 중 아래 형식의 줄을 답변 텍스트에 그대로 남겨라(콘솔이 진행률로 읽는다): 단계가 바뀔 때마다 "▶ 단계: ${(STAGES[mode] || STAGES.custom).join("|")}" 중 하나, ${mode === "plan" ? "기획 한 장을 확정할 때마다" : "이미지 한 장을 저장할 때마다"} "▶ 타일: n/N 이름". N 은 총 장수.`;
 const PROMPTS = {
   photo: mode => mode === "keep"
@@ -400,8 +519,6 @@ const PROMPTS = {
     const d = path.join(ROOT, n), out = [];
     const plan = readJson(path.join(d, "plan.json"));
     if (plan && plan.approvedAt && Array.isArray(plan.tiles) && plan.tiles.length) out.push(`[승인된 기획안] ${n}/plan.json 은 사용자가 검토·수정 후 승인한 기획안이다(${plan.tiles.length}장). 기획안 단계는 새로 짜지 말고, 타일 수·순서·섹션·카피(head/sub/body)를 plan.json 과 글자 하나까지 똑같이 쓴다. visual 은 연출 지시로 따른다. ${n}/기획안.md 는 plan.json 과 맞게만 갱신한다. 타일 파일명은 plan.json 의 n 값(예: 01.png)을 쓴다.`);
-    const ap = readJson(path.join(d, "product", "approved.json"));
-    if (ap && ap.file && isFile(path.join(d, "product", ap.file))) out.push(`[승인된 제품 컷] ${n}/product/${ap.file} 은 사용자가 원본과 비교해 승인한 제품 이미지다. 제품이 크게 나오는 타일은 이 컷을 remove_background → PIL 합성으로 그대로 쓰고(픽셀 보존), 각도·연출이 달라야 하는 타일만 이 컷을 image_references 첫 번째로 넣어 생성하되 형태·로고·라벨 글자를 이 컷과 똑같이 유지한다. 제품 컷 자체를 다시 만들지 않는다.`);
     return out.join("\n");
   },
   make: (n, o) => `${MARK("make")}
@@ -457,6 +574,8 @@ function makeRun() { return Object.assign(Object.create(RUN_PROTO), { proc: null
 async function startRun(name, mode, b, qid) {
   if (!isProjectDir(name)) return { ok: false, error: "없는 프로젝트입니다" };
   if (!(await loginOk())) return NEED_LOGIN;
+  const effMode = mode === "resume" ? ((readRuns(name).last || {}).mode || "") : mode;
+  if (NEED_HF_MODES.has(effMode) && !(await HFA.ready())) return NEED_HF;
   const cur = runFor(name); if (cur && cur.proc && cur.exit == null) return { ok: false, error: "이 프로젝트는 이미 AI 작업 중입니다" };
   if (runningCount() >= 3) return { ok: false, error: "동시에 3개까지만 돌릴 수 있습니다" };
   const r = makeRun(); r.qid = qid || null;
@@ -479,7 +598,7 @@ const RUN_PROTO = {
   summary() { return { running: !!(this.proc && this.exit == null), name: this.name, mode: this.mode, done: this.done, exit: this.exit, count: this.lines.length, startedAt: this.startedAt, runId: this.startedAt,
     stages: this.stages(), stage: this.stage, stageIdx: this.stageIdx, tileDone: this.tileDone, tileTotal: this.tileTotal, tileName: this.tileName, pct: this.pct(), last: this.last,
     resumes: this.resumes, pendingResume: this.pendingResume, stopped: this.userStopped, abort: this.abortReason, hf: this.hf, gen: this.gen, cost: this.cost, resumed: this.resumed,
-    tile: this.opts.tile || "", op: this.opts.op || "", newId: this.opts.newId || "", canResume: !!(this.done && this.exit !== 0 && !this.abortReason), qid: this.qid, needLogin: !!(this.done && this.exit !== 0 && LOGIN_RE.test(this.lastErr)) }; },
+    tile: this.opts.tile || "", op: this.opts.op || "", newId: this.opts.newId || "", canResume: !!(this.done && this.exit !== 0 && !this.abortReason), qid: this.qid, needLogin: !!(this.done && this.exit !== 0 && LOGIN_RE.test(this.lastErr)), needHf: this.abortReason === "hf", errText: this.exit ? this.lastErr.slice(0, 300) : "" }; },
   setStage(name) { const st = this.stages(); const i = st.indexOf(name); if (i >= 0 && i >= this.stageIdx) { this.stageIdx = i; this.stage = name; } },
   /* 텍스트 마커(▶ 단계 / ▶ 타일) 우선, 없으면 도구 호출로 추정 */
   track(kind, text) {
@@ -542,7 +661,13 @@ const RUN_PROTO = {
     const args = ["-p", ...(extra || []), "--model", "claude-opus-5", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Bash", "mcp__higgsfield", "WebFetch"];
     if (!this.proc) this.proc = { pending: true };
-    claudeGate().then(() => this.spawnSeg(prompt, args));
+    claudeGate().then(async () => {
+      if (this.exit != null) return;
+      let cfg = null; try { cfg = await mcpConfigFor(this.mode, this.startedAt + "-" + (this.resumes || 0)); } catch (e) { logErr(e); }
+      if (!cfg) { this.abortReason = "hf"; this.push("err", NEED_HF.error); return this.finish(-2); }
+      this.mcpFile = cfg; args.push("--mcp-config", qarg(cfg), "--strict-mcp-config");
+      this.spawnSeg(prompt, args);
+    });
     return { ok: true, message: "시작했습니다" };
   },
   spawnSeg(prompt, args) {
@@ -563,6 +688,7 @@ const RUN_PROTO = {
   /* 한 번의 claude 실행이 끝났을 때: 실패면 조건이 맞을 때 같은 세션으로 자동 이어하기 */
   segEnd(code) {
     if (this.exit != null) return;
+    try { if (this.mcpFile) { fs.unlinkSync(this.mcpFile); this.mcpFile = ""; } } catch (e) {}
     const ok = code === 0 && !this.resultError;
     if (this.userStopped) return this.finish(-2);
     if (!ok && this.canAutoResume()) {
@@ -588,6 +714,7 @@ const RUN_PROTO = {
   finish(code) {
     if (this.exit != null) return;
     this.exit = code; this.done = true; this.pendingResume = false;
+    try { if (this.mcpFile) fs.unlinkSync(this.mcpFile); } catch (e) {}
     if (code === 0) this.stageIdx = this.stages().length - 1;
     this.push("sys", code === 0 ? "끝" : code === -2 ? "중단됨" : "종료 코드 " + code);
     try {
@@ -622,9 +749,9 @@ const RUN_PROTO = {
       if (j.is_error) this.push("err", friendlyErr(String(j.result || j.subtype || "")));
     } else if (j.type === "system" && j.subtype === "init") {
       if (j.session_id) { this.sid = j.session_id; writeRuns(this.name, r => { r.last = Object.assign(r.last || {}, { sid: this.sid }); }); }
-      this.push("sys", `모델 ${j.model || ""} · MCP ${(j.mcp_servers || []).map(m => m.name + ":" + m.status).join(", ") || "없음"}`);
+      this.push("sys", `모델 ${j.model || ""}${(j.mcp_servers || []).length ? " · " + j.mcp_servers.map(m => (m.name === "higgsfield" ? "Higgsfield" : m.name) + " " + (/connected/i.test(m.status) ? "연결됨" : m.status)).join(", ") : ""}`);
       const hf = (j.mcp_servers || []).find(m => m.name === "higgsfield");
-      if (NEED_HF.has(this.mode) && (!hf || /needs-auth|failed|error/i.test(hf.status || ""))) { this.abortReason = "hf"; this.push("err", "Higgsfield MCP 가 연결되지 않았습니다(" + (hf ? hf.status : "미등록") + ") — 설정 → 연결에서 Higgsfield 인증을 다시 하세요. 이미지 생성이 안 되므로 작업을 중단합니다."); MCPCHK.at = 0; setTimeout(() => this.stop(), 300); }
+      if (NEED_HF_MODES.has(this.mode) && (!hf || !/connected/i.test(hf.status || ""))) { this.abortReason = "hf"; HFA.verified = { at: 0, ok: null }; HFA.verify(true); this.push("err", "Higgsfield 연결이 끊겼습니다(" + (hf ? hf.status : "미등록") + ") — [Higgsfield 연결] 을 누르고 브라우저에서 로그인만 하면 됩니다. 이미지 생성이 안 되므로 작업을 멈춥니다."); setTimeout(() => this.stop(), 300); }
     }
   },
   stop() {
@@ -685,7 +812,7 @@ const Q = {
       if (runningCount() >= this.conc()) break;
       const cur = runFor(it.name); if (cur && cur.proc && cur.exit == null) continue;
       const out = await startRun(it.name, it.mode, { photoMode: it.photoMode, tile: it.tile, op: it.op, note: it.note }, it.id);
-      if (out.needLogin) { if (it.info !== "Claude 로그인 필요 — 로그인하면 이어서 시작") { it.info = "Claude 로그인 필요 — 로그인하면 이어서 시작"; changed = true; } break; }
+      if (out.needLogin || out.needHf) { const inf = out.needLogin ? "Claude 로그인 필요 — 로그인하면 이어서 시작" : "Higgsfield 연결 필요 — 연결하면 이어서 시작"; if (it.info !== inf) { it.info = inf; changed = true; } break; }
       it.info = "";
       if (out.ok) { it.status = "running"; it.startedAt = now; } else { it.status = "failed"; it.error = out.error; it.endedAt = now; }
       changed = true;
@@ -766,7 +893,8 @@ ${photos.map(p => "- " + p).join("\n")}
     await claudeGate();
     let out = "", err = "";
     let pr;
-    try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "40", "--allowedTools", "Read"], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
+    const mcpf = await mcpConfigFor("none", "sug-" + Date.now()).catch(() => null);
+    try { pr = spawn("claude", ["-p", "--model", "claude-sonnet-5", "--output-format", "json", "--max-turns", "40", "--allowedTools", "Read", ...(mcpf ? ["--mcp-config", qarg(mcpf), "--strict-mcp-config"] : [])], { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
     catch (e) { this.running = false; this.error = e.message; return { ok: false, error: e.message }; }
     this.proc = pr;
     try { pr.stdin.write(prompt, "utf8"); pr.stdin.end(); } catch (e) {}
@@ -774,7 +902,7 @@ ${photos.map(p => "- " + p).join("\n")}
     pr.stderr.on("data", c => { err += c.toString("utf8"); });
     pr.on("error", e => { this.running = false; this.error = "실행 오류: " + e.message; });
     pr.on("close", code => {
-      this.running = false;
+      this.running = false; try { if (mcpf) fs.unlinkSync(mcpf); } catch (e) {}
       try {
         const line = out.trim().split(/\r?\n/).filter(l => l.trim().startsWith("{")).pop() || out.trim();
         const j = JSON.parse(line); const txt = String(j.result || "");
@@ -795,9 +923,9 @@ const JOBS_RUNNING = () => [...JOBS.values()].some(j => j.running);
 function jobGet(kind, name) { const j = JOBS.get(kind + "|" + name); return j ? { ok: true, kind, name, running: j.running, stage: j.stage, error: j.error, needLogin: !!(j.error && LOGIN_RE.test(j.error)), data: j.data, startedAt: j.startedAt, cost: j.cost, done: j.done, total: j.total } : { ok: true, kind, name, running: false }; }
 function jobNew(kind, name) { const k = kind + "|" + name, cur = JOBS.get(k); if (cur && cur.running) return null; const j = { running: true, stage: "준비", error: "", data: null, startedAt: Date.now(), cost: null, done: 0, total: 0 }; JOBS.set(k, j); return j; }
 function pickJson(txt) { txt = String(txt || ""); const s = txt.indexOf("{"), e = txt.lastIndexOf("}"); if (s < 0 || e <= s) throw new Error("응답에 JSON 이 없습니다 — " + txt.slice(0, 160)); return JSON.parse(txt.slice(s, e + 1)); }
-function jobClaude(j, prompt, o, onResult) { j.stage = "차례를 기다리는 중"; claudeGate().then(() => jobClaude1(j, prompt, o, onResult)); }
+function jobClaude(j, prompt, o, onResult) { j.stage = "차례를 기다리는 중"; claudeGate().then(async () => { const f = await mcpConfigFor("none", "job-" + Date.now()).catch(() => null); jobClaude1(j, prompt, Object.assign({}, o, { mcpf: f }), onResult); }); }
 function jobClaude1(j, prompt, o, onResult) {
-  const args = ["-p", "--model", o.model || "claude-sonnet-5", "--output-format", "json", "--max-turns", String(o.turns || 30), "--allowedTools", ...(o.tools || ["Read"])];
+  const args = ["-p", "--model", o.model || "claude-sonnet-5", "--output-format", "json", "--max-turns", String(o.turns || 30), "--allowedTools", ...(o.tools || ["Read"]), ...(o.mcpf ? ["--mcp-config", qarg(o.mcpf), "--strict-mcp-config"] : [])];
   let pr; try { pr = spawn("claude", args, { cwd: ROOT, windowsHide: true, shell: IS_WIN, stdio: ["pipe", "pipe", "pipe"], env: Object.assign({}, process.env, { PYTHONUTF8: "1" }) }); }
   catch (e) { j.running = false; j.error = "실행 실패: " + e.message; return; }
   j.stage = o.stage || "AI 가 보는 중"; let out = "", err = "";
@@ -806,6 +934,7 @@ function jobClaude1(j, prompt, o, onResult) {
   pr.stderr.on("data", c => { err += c.toString("utf8"); });
   pr.on("error", e => { j.error = "실행 오류: " + e.message; j.running = false; });
   pr.on("close", code => {
+    try { if (o.mcpf) fs.unlinkSync(o.mcpf); } catch (e) {}
     try {
       const line = out.trim().split(/\r?\n/).filter(l => l.trim().startsWith("{")).pop() || out.trim();
       const r = JSON.parse(line); if (r.is_error) throw new Error(friendlyErr(String(r.result || r.subtype || "")));
@@ -1105,24 +1234,10 @@ async function hfBalance(force) {
   if (!force && USAGE.h && Date.now() - USAGE.hAt < (USAGE.h.ok ? 5 : 1) * 60000) return USAGE.h;
   let out;
   try {
-    const cr = readCreds() || {}, ent = Object.entries(cr.mcpOAuth || {}).find(([k]) => k.startsWith("higgsfield|"));
-    const e = ent && ent[1], tok = e && e.accessToken;
-    if (!tok) out = { ok: false, reason: "Higgsfield 인증 필요" };
-    else if (e.expiresAt && +e.expiresAt < Date.now()) out = { ok: false, reason: "Higgsfield 토큰 만료 — AI 작업을 돌리거나 재인증하면 갱신됩니다" };
+    const tok = await HFA.token();
+    if (!tok) out = { ok: false, reason: "Higgsfield 연결 필요" };
     else {
-      const url = e.serverUrl || HIGGSFIELD_URL; let sid = "";
-      const rpc = async (body, idWanted) => {
-        const h = { Authorization: "Bearer " + tok, "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18" }; if (sid) h["mcp-session-id"] = sid;
-        const r = await fetch(url, { method: "POST", headers: h, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
-        if (!sid && r.headers.get("mcp-session-id")) sid = r.headers.get("mcp-session-id");
-        if (r.status === 401 || r.status === 403) throw new Error("AUTH");
-        if (idWanted == null) return null;
-        const ct = r.headers.get("content-type") || "", t = await r.text();
-        if (/event-stream/.test(ct)) { for (const ln of t.split(/\r?\n/)) { if (!ln.startsWith("data:")) continue; try { const m = JSON.parse(ln.slice(5).trim()); if (m.id === idWanted) return m; } catch (x) {} } return null; }
-        try { return JSON.parse(t); } catch (x) { return null; }
-      };
-      await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "reboot-console", version: APP_VERSION } } }, 1);
-      await rpc({ jsonrpc: "2.0", method: "notifications/initialized" });
+      const rpc = await hfRpcSession(tok);
       const lst = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, 2);
       const tools = (lst && lst.result && lst.result.tools) || [];
       const tool = tools.find(t => /balance|credit/i.test(t.name)) || tools.find(t => /account|user_info|me$|profile/i.test(t.name));
@@ -1137,7 +1252,7 @@ async function hfBalance(force) {
         out = { ok: credits != null, credits, tool: tool.name, text: txt.slice(0, 200), reason: credits == null ? "잔액을 읽지 못함" : "" };
       }
     }
-  } catch (e) { out = { ok: false, reason: e.message === "AUTH" ? "Higgsfield 재인증 필요" : String(e.message || e).slice(0, 120) }; }
+  } catch (e) { if (e.message === "AUTH") HFA.verify(true); out = { ok: false, reason: e.message === "AUTH" ? "Higgsfield 연결 필요" : String(e.message || e).slice(0, 120) }; }
   USAGE.h = out; USAGE.hAt = Date.now(); return out;
 }
 function localStats() {
@@ -1306,6 +1421,13 @@ async function handle(req, res) {
       if (!sub) actLog(n, "photo", "사진 뺌 — " + f);
       return json(res, 200, { ok: true });
     }
+    if (p === "/hf/callback") {
+      let ok = false, msg = "";
+      try { const v = await HFA.callback(q); ok = v.ok !== false; msg = ok ? "콘솔로 돌아가면 바로 쓸 수 있습니다. 이 창은 닫아도 됩니다." : "로그인은 됐지만 Higgsfield 가 이 인증을 받아주지 않았습니다 (" + (v.reason || "") + "). 콘솔 설정 → 연결에서 [Claude 방식으로 인증] 을 눌러주세요."; }
+      catch (e) { msg = e.message; logErr(e); }
+      const html = `<!doctype html><meta charset="utf-8"><title>re:boot — Higgsfield 연결</title><body style="font-family:Pretendard,'Malgun Gothic',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#FAFAF9;color:#37352F"><div style="text-align:center;max-width:420px;padding:32px;border-radius:16px;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.08)"><div style="font-size:44px">${ok ? "✅" : "⚠️"}</div><h2 style="margin:8px 0">${ok ? "Higgsfield 연결 완료" : "연결하지 못했습니다"}</h2><p style="color:#787774;line-height:1.6">${String(msg).replace(/[<>&]/g, "")}</p></div></body>`;
+      const b = Buffer.from(html, "utf8"); res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": b.length }); return res.end(b);
+    }
     if (p === "/" ) { res.writeHead(302, { Location: "/app/" }); return res.end(); }
     if (p === "/app" || p.startsWith("/app/")) return serveFile(res, APP_DIR, p.slice(4) || "/");
     if (!ROOT) { res.writeHead(404); return res.end(); }
@@ -1379,6 +1501,7 @@ else {
     if (!(await ensureRoot())) return;
     try { session.fromPartition("refcap").on("will-download", (e, item) => { try { item.cancel(); } catch (x) {} }); } catch (e) {}   // 경쟁사 캡처 창은 아무것도 내려받지 않는다
     await startServer();
+    cleanMcpFiles(false);
     UPD.init();
     Q.start();
     if (process.argv.includes("--smoke")) {           // 빌드 검증용: 서버만 띄우고 포트를 임시 파일에 기록
